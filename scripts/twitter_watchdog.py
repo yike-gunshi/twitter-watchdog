@@ -1,4 +1,4 @@
-#!/Users/dbwu/.claude/skills/twitter-watchdog/venv/bin/python3
+#!/usr/bin/env python3
 """
 Twitter Watchdog - 定时抓取 Twitter 关注列表中的 AI 相关推文
 
@@ -51,8 +51,12 @@ TZ_CN = timezone(timedelta(hours=8))
 
 
 class TwitterWatchdog:
-    def __init__(self, config_file=None, cli_args=None):
-        """初始化 Twitter Watchdog"""
+    def __init__(self, config_file=None, cli_args=None, report_only=False):
+        """初始化 Twitter Watchdog
+
+        Args:
+            report_only: True 时跳过 Twitter API 初始化（仅用于生成周报/月报）
+        """
         self.config = self.load_config(config_file)
         self.hours_ago = None
 
@@ -66,19 +70,20 @@ class TwitterWatchdog:
         self.notifications_config = self.config.get("notifications", {})
         self.advanced_config = self.config.get("advanced", {})
 
-        # X 官方 API 凭证（仅用于获取关注列表）
-        api_config = self.config.get("twitter_api", {})
-        self.consumer_key = api_config.get("consumer_key", "")
-        self.consumer_secret = api_config.get("consumer_secret", "")
+        if not report_only:
+            # X 官方 API 凭证（仅用于获取关注列表）
+            api_config = self.config.get("twitter_api", {})
+            self.consumer_key = api_config.get("consumer_key", "")
+            self.consumer_secret = api_config.get("consumer_secret", "")
 
-        # twitterapi.io 凭证（用于抓取推文）
-        self.twitterapi_io_key = self.config.get("twitterapi_io", {}).get("api_key", "")
+            # twitterapi.io 凭证（用于抓取推文）
+            self.twitterapi_io_key = self.config.get("twitterapi_io", {}).get("api_key", "")
 
-        # 生成 X 官方 Bearer Token
-        self.bearer_token = self._generate_bearer_token()
+            # 生成 X 官方 Bearer Token
+            self.bearer_token = self._generate_bearer_token()
 
-        self.timeout = self.advanced_config.get("timeout_seconds", 30)
-        self.state = self.load_state()
+            self.timeout = self.advanced_config.get("timeout_seconds", 30)
+            self.state = self.load_state()
 
     def apply_cli_overrides(self, args):
         """将 CLI 参数覆盖到 config"""
@@ -452,19 +457,19 @@ class TwitterWatchdog:
 输出格式（严格遵循）：
 每条为一个列表项，标题本身就是链接，后跟客观描述：
 
-- [具体标题](推文URL)，详细客观描述。
+- [具体标题](推文URL)。客观描述。
 
 示例：
-- [Claude Code 新增 /insights 命令](https://x.com/xxx/status/123)。运行后分析过去一个月的历史记录、项目情况和使用习惯，给出工作流优化建议。
-- [Mistral AI 发布 Voxtral Transcribe 2 语音转文本模型](https://x.com/xxx/status/456)，包括批量转录的 V2 和实时的 Realtime。V2 支持 13 种语言，支持说话人识别和词级时间戳；Realtime 延迟低于 200ms。
+- [Claude Code 新增 /insights 命令](https://x.com/xxx/status/123)。分析过去一个月的历史记录、项目情况和使用习惯，给出工作流优化建议。
+- [Mistral AI 发布 Voxtral Transcribe 2](https://x.com/xxx/status/456)。包括批量转录 V2 和实时 Realtime 两个版本，V2 支持 13 种语言、说话人识别和词级时间戳，Realtime 延迟低于 200ms。
 
 规则：
-- 只描述客观事实和工具功能，不做分析评价
-- 标题要具体：说清是什么工具/产品/事件
-- 描述包含关键功能、数据、特点
-- 如果推文引用/转发了其他内容，描述原始内容是什么
-- 按信息价值排序，输出一个扁平列表，不要分类分组
-- 不要加总结段落或结尾语
+- 标题要具体精炼：说清是什么工具/产品/事件，不加多余修饰
+- 描述包含关键数据、核心功能、具体特点，去除空泛表述和重复修饰
+- 如果推文引用/转发了其他内容，描述原始内容
+- 多条推文讲同一件事时，合并为一条，综合所有信息
+- 按信息价值排序，输出扁平列表，不分类分组
+- 不加总结段落或结尾语
 
 最后，输出你筛选出的所有 AI 相关推文的 ID 列表（JSON 格式）：
 ```json
@@ -478,19 +483,19 @@ class TwitterWatchdog:
 
 将推文整理为信息清单，输出格式：
 
-- [具体标题](推文URL)，详细客观描述。
+- [具体标题](推文URL)。客观描述。
 
 示例：
-- [Claude Code 新增 /insights 命令](https://x.com/xxx/status/123)。运行后分析过去一个月的历史记录、项目情况和使用习惯，给出工作流优化建议。
-- [Mistral AI 发布 Voxtral Transcribe 2 语音转文本模型](https://x.com/xxx/status/456)，包括批量转录的 V2 和实时的 Realtime。V2 支持 13 种语言，支持说话人识别和词级时间戳；Realtime 延迟低于 200ms。
+- [Claude Code 新增 /insights 命令](https://x.com/xxx/status/123)。分析过去一个月的历史记录、项目情况和使用习惯，给出工作流优化建议。
+- [Mistral AI 发布 Voxtral Transcribe 2](https://x.com/xxx/status/456)。包括批量转录 V2 和实时 Realtime 两个版本，V2 支持 13 种语言、说话人识别和词级时间戳，Realtime 延迟低于 200ms。
 
 规则：
-- 只描述客观事实和工具功能，不做分析评价
-- 标题要具体：说清是什么工具/产品/事件
-- 描述包含关键功能、数据、特点
-- 如果推文引用/转发了其他内容，描述原始内容是什么
-- 按信息价值排序，输出一个扁平列表，不要分类分组
-- 不要加总结段落或结尾语
+- 标题要具体精炼：说清是什么工具/产品/事件，不加多余修饰
+- 描述包含关键数据、核心功能、具体特点，去除空泛表述和重复修饰
+- 如果推文引用/转发了其他内容，描述原始内容
+- 多条推文讲同一件事时，合并为一条，综合所有信息
+- 按信息价值排序，输出扁平列表，不分类分组
+- 不加总结段落或结尾语
 
 ---
 {all_content}"""
@@ -839,6 +844,228 @@ class TwitterWatchdog:
 
             f.write(f"*详见最新的 `ai_tweets_*.md` 文件*\n")
 
+    # ── 周报/月报 ──────────────────────────────────────────
+
+    def _parse_summary_items(self, summary_text):
+        """解析 AI 总结文本，提取每条新闻条目"""
+        items = []
+        if not summary_text:
+            return items
+        for para in summary_text.split("\n\n"):
+            para = para.strip()
+            if not para.startswith("- ["):
+                continue
+            match = re.match(r'^- \[(.+?)\]\((.+?)\)[，。,.]\s*(.+)$', para, re.DOTALL)
+            if match:
+                title, url, desc = match.groups()
+                items.append({
+                    "title": title,
+                    "url": url,
+                    "description": desc.strip(),
+                    "full_text": para,
+                })
+        return items
+
+    def _deduplicate_items(self, all_items):
+        """按 URL 去重，保留描述最长的版本"""
+        url_map = {}
+        for item in all_items:
+            url = item["url"]
+            if url not in url_map or len(item["full_text"]) > len(url_map[url]["full_text"]):
+                url_map[url] = item
+        return list(url_map.values())
+
+    def _claude_consolidate(self, items, period, period_label):
+        """调用 Claude 将去重后的条目整合为周报/月报"""
+        summary_config = self.config.get("ai_summary", {})
+        api_key = (
+            summary_config.get("api_key", "")
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+            or os.environ.get("ANTHROPIC_API_KEY", "")
+        )
+        if not api_key:
+            print("  跳过 Claude 整合（未配置 API Key）")
+            return None
+
+        base_url = (
+            summary_config.get("base_url", "")
+            or os.environ.get("ANTHROPIC_BASE_URL", "")
+            or "https://api.anthropic.com"
+        )
+
+        label = "月报" if period == "monthly" else "周报"
+        content = "\n".join(item["full_text"] for item in items)
+
+        prompt = f"""你是一个 AI 行业信息整理员。以下是 {period_label} 期间每日 AI 推文总结中汇总的信息条目（已按 URL 初步去重，共 {len(items)} 条）。
+
+任务：将这些条目整合为一份结构化的{label}。
+
+输出结构（严格遵循）：
+
+## 本期要点
+
+用 3~5 个bullet point 概括本期最重要的事件/发布/趋势，每条一句话，不带链接。
+
+## AI 产品与工具
+
+新产品发布、产品重大更新、工具推荐等。
+
+## AI 模型与技术
+
+新模型发布、模型评测、技术架构、算法突破等。
+
+## AI 开发者生态
+
+开发框架、API、SDK、开源项目、开发者工具链等。
+
+## AI 行业动态
+
+公司战略、融资收购、人事变动、政策法规、行业合作等。
+
+## AI 研究与观点
+
+学术论文、实验结果、行业观察、趋势分析等。
+
+每个分类下的条目格式：
+- [具体标题](推文URL)。客观描述，信息齐全但不冗余。
+
+规则：
+- 合并报道同一事件/产品的不同条目，保留最完整的描述
+- 每个分类内按重要性从高到低排列
+- 每条描述应包含关键数据、核心功能、具体特点，去除重复修饰和空泛表述
+- 只描述客观事实，不做主观评价
+- 如果某个分类下没有内容，省略该分类
+- 不要加统计数据或结尾总结
+
+---
+{content}"""
+
+        model = summary_config.get("model", "claude-sonnet-4-5-20250929")
+        max_tokens = summary_config.get("max_tokens", 4096)
+        if period == "monthly":
+            max_tokens = max(max_tokens, 8192)
+
+        print(f"  调用 Claude ({model}) 整合{label}...")
+        try:
+            api_url = f"{base_url.rstrip('/')}/v1/messages"
+            resp = requests.post(
+                api_url,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=180,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            text = result["content"][0]["text"]
+            usage = result.get("usage", {})
+            print(f"  Claude 整合完成（{usage.get('input_tokens', 0)} + {usage.get('output_tokens', 0)} tokens）")
+            return text
+        except Exception as e:
+            print(f"  Claude 整合失败: {e}")
+            return None
+
+    def generate_periodic_report(self, period, date_str):
+        """生成周报或月报
+
+        Args:
+            period: "monthly" or "weekly"
+            date_str: "YYYY-MM" for monthly, "YYYY-MM-DD" for weekly
+        """
+        output_path = Path(self.output_config["directory"])
+
+        if period == "monthly":
+            year, month = date_str.split("-")
+            period_label = f"{year} 年 {int(month)} 月"
+            output_file = output_path / f"monthly_report_{year}_{month}.md"
+        else:
+            start_date = datetime.strptime(date_str, "%Y-%m-%d")
+            end_date = start_date + timedelta(days=7)
+            period_label = f"{start_date.strftime('%m/%d')} ~ {end_date.strftime('%m/%d')}"
+            output_file = output_path / f"weekly_report_{date_str.replace('-', '_')}.md"
+
+        label = "月报" if period == "monthly" else "周报"
+        print(f"=== 生成{label} ===")
+        print(f"期间: {period_label}")
+        print(f"数据目录: {output_path}")
+
+        # 扫描历史 JSON 文件
+        json_files = sorted(output_path.glob("ai_tweets_*.json"))
+        if not json_files:
+            print("  未找到历史报告文件")
+            return
+
+        # 按日期范围过滤
+        matched_files = []
+        for f in json_files:
+            parts = f.stem.split("_")  # ai_tweets_20260211_095245
+            if len(parts) >= 3:
+                file_date_str = parts[2]  # 20260211
+                if period == "monthly":
+                    if file_date_str.startswith(f"{year}{month}"):
+                        matched_files.append(f)
+                else:
+                    try:
+                        file_date = datetime.strptime(file_date_str, "%Y%m%d")
+                        if start_date <= file_date < end_date:
+                            matched_files.append(f)
+                    except ValueError:
+                        pass
+
+        if not matched_files:
+            print(f"  在指定期间内未找到报告文件")
+            return
+
+        print(f"  找到 {len(matched_files)} 个报告文件")
+
+        # 提取所有 AI 总结条目
+        all_items = []
+        for f in matched_files:
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                summary = data.get("ai_summary", "")
+                if summary:
+                    items = self._parse_summary_items(summary)
+                    all_items.extend(items)
+                    print(f"  {f.name}: {len(items)} 条")
+            except Exception as e:
+                print(f"  {f.name}: 读取失败 - {e}")
+
+        if not all_items:
+            print("  未提取到任何信息条目")
+            return
+
+        print(f"  共提取 {len(all_items)} 条（去重前）")
+
+        # 去重
+        unique_items = self._deduplicate_items(all_items)
+        print(f"  去重后: {len(unique_items)} 条")
+
+        # Claude 整合
+        consolidated = self._claude_consolidate(unique_items, period, period_label)
+
+        # 生成报告
+        report_title = f"AI 推文{label}"
+        output_path.mkdir(parents=True, exist_ok=True)
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(f"# {report_title} — {period_label}\n\n")
+            if consolidated:
+                f.write(consolidated)
+            else:
+                # Fallback: 直接输出去重后的条目
+                f.write("\n\n".join(item["full_text"] for item in unique_items))
+            f.write("\n")
+
+        print(f"\n报告已保存: {output_file}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -866,8 +1093,19 @@ def main():
     parser.add_argument("--reset-state", action="store_true", help="重置去重状态")
     parser.add_argument("--no-trending", action="store_true", help="禁用热门搜索")
     parser.add_argument("--no-summary", action="store_true", help="禁用 AI 总结")
+    parser.add_argument("--monthly", metavar="YYYY-MM", help="生成月报（如 2026-02）")
+    parser.add_argument("--weekly", metavar="YYYY-MM-DD", help="生成周报（从指定日期起 7 天）")
 
     args = parser.parse_args()
+
+    # 周报/月报模式：不需要 Twitter API，只需要配置和历史数据
+    if args.monthly or args.weekly:
+        watchdog = TwitterWatchdog(config_file=args.config, cli_args=args, report_only=True)
+        period = "monthly" if args.monthly else "weekly"
+        date_str = args.monthly or args.weekly
+        watchdog.generate_periodic_report(period, date_str)
+        print("\n=== 完成 ===")
+        return
 
     if args.reset_state:
         state_file = ".twitter_watchdog_state.json"
