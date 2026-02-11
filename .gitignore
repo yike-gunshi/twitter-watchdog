@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Config with real credentials
+config/config.yaml
+
+# Runtime state
+.twitter_watchdog_state.json
+
+# Output (keep examples/ only)
+output/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

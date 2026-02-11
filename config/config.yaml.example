@@ -1,0 +1,94 @@
+# Twitter Watchdog 配置文件
+# 架构：X 官方 API 获取关注列表 + twitterapi.io 抓取推文 + Claude AI 智能筛选总结
+
+# X 官方 API 凭证（仅用于获取关注列表，免费）
+# 申请地址：https://developer.twitter.com/
+twitter_api:
+  consumer_key: "YOUR_CONSUMER_KEY"
+  consumer_secret: "YOUR_CONSUMER_SECRET"
+
+# twitterapi.io 凭证（用于抓取推文，$0.15/1k tweets）
+# 申请地址：https://twitterapi.io/
+twitterapi_io:
+  api_key: "YOUR_TWITTERAPI_IO_KEY"
+
+# Twitter 账户设置
+twitter:
+  username: "your_username"            # 你的 Twitter 用户名（不带 @）
+  tweets_per_user: 20                  # 每个用户最多保留的推文数量
+  exclude_replies: true                # 排除回复
+  exclude_retweets: true               # 排除转推
+
+# 输出设置
+output:
+  directory: "./output"                # 输出目录
+  formats: ["markdown", "json"]        # 输出格式
+  create_summary: true                 # 创建汇总报告
+
+# 内容过滤（当 ai_filter 关闭时使用关键词匹配）
+filters:
+  enabled: true
+  keywords:
+    include:
+      - "AI"
+      - "artificial intelligence"
+      - "machine learning"
+      - "LLM"
+      - "GPT"
+      - "ChatGPT"
+      - "Claude"
+      - "Gemini"
+      - "AGI"
+      - "OpenAI"
+      - "Anthropic"
+      - "DeepSeek"
+      - "Mistral"
+      - "Copilot"
+      - "transformer"
+      - "RAG"
+      - "AI agent"
+      - "generative AI"
+      - "人工智能"
+      - "大模型"
+      - "大语言模型"
+    exclude: ["spam", "advertisement", "crypto airdrop"]
+  min_likes: 0
+  min_retweets: 0
+  language: "all"
+
+# AI 智能总结（Claude API）
+ai_summary:
+  enabled: true
+  ai_filter: true                      # 由 Claude 判断推文是否与 AI 相关（替代关键词匹配）
+  base_url: ""                         # API 代理地址（留空则用官方 https://api.anthropic.com）
+  api_key: ""                          # Anthropic API Key（也可通过环境变量 ANTHROPIC_API_KEY 设置）
+  model: "claude-sonnet-4-5-20250929"  # 模型选择（sonnet 性价比高）
+  max_tokens: 4096                     # 最大输出 token 数
+
+# 全网热门 AI 搜索（twitterapi.io Advanced Search）
+trending_search:
+  enabled: true
+  query: "(AI OR LLM OR GPT OR Claude OR OpenAI OR AGI OR 大模型) min_faves:50 -is:retweet -is:reply"
+  min_views: 2000                      # 最少浏览量（按浏览量筛选）
+  max_tweets: 20                       # 最多返回条数
+
+# 通知设置（macOS）
+notifications:
+  enabled: true
+  on_new_tweets: true
+  on_keywords_matched: true
+  sound: "Glass"
+  threshold: 1
+
+# 调度设置
+schedule:
+  interval_hours: 1
+
+# 高级设置
+advanced:
+  max_followings: 0                    # 0 表示不限制
+  followings_cache_hours: 24           # 关注列表缓存时长（小时），减少 X API 调用
+  timeout_seconds: 30
+  retry_attempts: 3
+  deduplicate: true
+  state_file: ".twitter_watchdog_state.json"
