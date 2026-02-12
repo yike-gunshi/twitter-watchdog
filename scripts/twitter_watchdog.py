@@ -353,25 +353,68 @@ class TwitterWatchdog:
         raise Exception("twitterapi.io 请求失败")
 
     def get_tweets(self, username):
-        """通过 twitterapi.io 获取指定用户的最新推文"""
-        data = self._twitterapiio_get(
-            "user/last_tweets",
-            params={"userName": username},
-        )
-        tweets = data.get("data", {}).get("tweets", [])
+        """通过 twitterapi.io 获取指定用户的最新推文（支持分页）
+
+        当设置了 hours_ago 时，会自动翻页直到推文时间超出时间窗口。
+        返回 (filtered_tweets, api_call_count) 元组。
+        """
+        exclude_rt = self.twitter_config.get("exclude_retweets", True)
+        exclude_reply = self.twitter_config.get("exclude_replies", True)
+        max_tweets = self.twitter_config.get("tweets_per_user", 20)
+
+        # 时间窗口 cutoff（用于决定是否继续翻页）
+        cutoff = None
+        if self.hours_ago is not None:
+            cutoff = self.now() - timedelta(hours=self.hours_ago)
 
         filtered = []
-        for t in tweets:
-            if self.twitter_config.get("exclude_retweets", True):
-                if t.get("type") == "retweet" or t.get("text", "").startswith("RT @"):
-                    continue
-            if self.twitter_config.get("exclude_replies", True):
-                if t.get("isReply", False):
-                    continue
-            filtered.append(t)
+        cursor = ""
+        api_call_count = 0
+        max_pages = 10  # 安全上限，防止无限翻页
 
-        max_tweets = self.twitter_config.get("tweets_per_user", 20)
-        return filtered[:max_tweets]
+        for _ in range(max_pages):
+            params = {"userName": username}
+            if cursor:
+                params["cursor"] = cursor
+
+            data = self._twitterapiio_get("user/last_tweets", params)
+            api_call_count += 1
+
+            tweets = data.get("data", {}).get("tweets", [])
+            if not tweets:
+                tweets = data.get("tweets", [])
+            if not tweets:
+                break
+
+            oldest_in_page = None
+            for t in tweets:
+                if exclude_rt and (t.get("type") == "retweet" or t.get("text", "").startswith("RT @")):
+                    continue
+                if exclude_reply and t.get("isReply", False):
+                    continue
+                filtered.append(t)
+
+                # 记录本页最旧推文时间
+                created = self.parse_tweet_time(t.get("createdAt", ""))
+                if created and (oldest_in_page is None or created < oldest_in_page):
+                    oldest_in_page = created
+
+            # 不需要分页的情况：没设置时间窗口，或已够数
+            if cutoff is None:
+                break
+
+            # 本页最旧推文已超出时间窗口，不需要继续翻页
+            if oldest_in_page and oldest_in_page < cutoff:
+                break
+
+            # 没有下一页
+            has_next = data.get("data", {}).get("has_next_page", data.get("has_next_page", False))
+            next_cursor = data.get("data", {}).get("next_cursor", data.get("next_cursor", ""))
+            if not has_next or not next_cursor:
+                break
+            cursor = next_cursor
+
+        return filtered[:max_tweets], api_call_count
 
     @staticmethod
     def extract_media_url(tweet):
@@ -652,17 +695,28 @@ class TwitterWatchdog:
 
         model = summary_config.get("model", "claude-sonnet-4-5-20250929")
         max_tokens = summary_config.get("max_tokens", 4096)
+        api_url = f"{base_url.rstrip('/')}/v1/messages"
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        # 统计推文总数
+        tweet_count = sum(len(ud["tweets"]) for ud in (followings_data or [])) + len(trending_tweets or [])
+        # 大窗口 + ai_filter 模式：拆成两次调用（筛选 + 总结）
+        use_two_pass = ai_filter and tweet_count > 150
+
+        if use_two_pass:
+            return self._two_pass_filter_and_summarize(
+                followings_data, trending_tweets, all_content, window_desc,
+                category_block, rules_block, model, max_tokens, api_url, headers
+            )
 
         print(f"  调用 Claude ({model}) via {base_url}...")
         try:
-            api_url = f"{base_url.rstrip('/')}/v1/messages"
             resp = requests.post(
-                api_url,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
+                api_url, headers=headers,
                 json={
                     "model": model,
                     "max_tokens": max_tokens,
@@ -699,6 +753,134 @@ class TwitterWatchdog:
             print(f"  AI 总结失败: {e}")
             return None, None
 
+    def _two_pass_filter_and_summarize(
+        self, followings_data, trending_tweets, all_content, window_desc,
+        category_block, rules_block, model, max_tokens, api_url, headers
+    ):
+        """大窗口模式：先筛选 AI 相关推文 ID，再用筛选后的数据生成总结"""
+        base_url = api_url.rsplit("/v1/", 1)[0]
+
+        # ── Pass 1: 筛选 ──
+        filter_prompt = f"""你是一个 AI 行业信息筛选员。以下是从 Twitter 抓取的推文列表{window_desc}。
+
+任务：从中找出所有与 AI 领域相关的推文（包括 AI 产品、模型、开发工具、行业动态、研究等）。
+
+只输出 JSON，不要输出其他内容：
+```json
+{{"ai_tweet_ids": ["id1", "id2", ...]}}
+```
+
+---
+{all_content}"""
+
+        print(f"  [Pass 1/2] 筛选 AI 推文 ({model}) via {base_url}...")
+        try:
+            resp = requests.post(
+                api_url, headers=headers,
+                json={
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": filter_prompt}],
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            response_text = result["content"][0]["text"]
+            usage = result.get("usage", {})
+            print(f"  筛选完成（{usage.get('input_tokens', 0)} + {usage.get('output_tokens', 0)} tokens）")
+
+            json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
+            if not json_match:
+                # 尝试直接解析整个输出
+                json_match = re.search(r'\{.*"ai_tweet_ids".*\}', response_text, re.DOTALL)
+                if json_match:
+                    id_data = json.loads(json_match.group(0))
+                else:
+                    print("  警告: 筛选未返回结果，保留所有推文")
+                    return None, None
+            else:
+                id_data = json.loads(json_match.group(1))
+
+            ai_tweet_ids = set(str(i) for i in id_data.get("ai_tweet_ids", []))
+            print(f"  Claude 识别出 {len(ai_tweet_ids)} 条 AI 相关推文")
+
+        except Exception as e:
+            print(f"  筛选失败: {e}，保留所有推文")
+            return None, None
+
+        # ── Pass 2: 用筛选后的推文生成总结 ──
+        filtered_parts = []
+        if followings_data:
+            filtered_parts.append("## 关注列表推文：")
+            for ud in followings_data:
+                uname = ud["user"]["username"]
+                for t in ud["tweets"]:
+                    tid = str(t.get("id", ""))
+                    if tid not in ai_tweet_ids:
+                        continue
+                    likes = t.get("likeCount", 0)
+                    views = t.get("viewCount", 0)
+                    text = t.get("text", "")[:200]
+                    url = t.get("url", "")
+                    quoted = t.get("quoted_tweet")
+                    quoted_info = ""
+                    if quoted:
+                        q_author = quoted.get("author", {}).get("userName", "?")
+                        q_text = quoted.get("text", "")[:150]
+                        quoted_info = f"\n  [引用 @{q_author}]: {q_text}"
+                    filtered_parts.append(f"- @{uname} ({views:,} views, {likes} likes): {text}{quoted_info}\n  URL: {url}")
+
+        if trending_tweets:
+            filtered_parts.append("\n## 全网热门 AI 推文：")
+            for t in trending_tweets:
+                tid = str(t.get("id", ""))
+                if tid not in ai_tweet_ids:
+                    continue
+                author = t.get("author", {}).get("userName", "?")
+                likes = t.get("likeCount", 0)
+                views = t.get("viewCount", 0)
+                text = t.get("text", "")[:200]
+                url = t.get("url", "")
+                filtered_parts.append(f"- @{author} ({views:,} views, {likes:,} likes): {text}\n  URL: {url}")
+
+        filtered_content = "\n".join(filtered_parts)
+
+        summary_prompt = f"""你是一个 AI 行业信息整理员。以下是从 Twitter 抓取的 AI 相关推文{window_desc}。
+
+任务：生成结构化的分类日报。
+
+读者画像：关注 AI 前沿动态的从业者。他们想从每条新闻中快速了解：发生了什么、谁发布的、核心内容（功能/指标/数据/价格）、怎么获取或有什么意义。
+
+{category_block}
+
+{rules_block}
+
+---
+{filtered_content}"""
+
+        print(f"  [Pass 2/2] 生成总结 ({model}) via {base_url}...")
+        try:
+            resp = requests.post(
+                api_url, headers=headers,
+                json={
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": summary_prompt}],
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            summary_text = result["content"][0]["text"]
+            usage = result.get("usage", {})
+            print(f"  总结完成（{usage.get('input_tokens', 0)} + {usage.get('output_tokens', 0)} tokens）")
+
+            return summary_text, ai_tweet_ids
+        except Exception as e:
+            print(f"  总结失败: {e}")
+            return None, ai_tweet_ids
+
     # ── 通知 ──────────────────────────────────────────────
 
     def send_notification(self, title, message):
@@ -728,7 +910,11 @@ class TwitterWatchdog:
         print(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC+8)")
         if self.hours_ago:
             cutoff = now - timedelta(hours=self.hours_ago)
-            print(f"时间窗口: {cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}（最近 {self.hours_ago} 小时）")
+            if cutoff.date() == now.date():
+                win = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
+            else:
+                win = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
+            print(f"时间窗口: {win}（最近 {self.hours_ago} 小时）")
         print()
 
         # 步骤1: 获取关注列表
@@ -751,8 +937,8 @@ class TwitterWatchdog:
             print(f"  [{i}/{len(followings)}] @{uname} ({name})...", end=" ", flush=True)
 
             try:
-                tweets = self.get_tweets(uname)
-                api_calls += 1
+                tweets, calls = self.get_tweets(uname)
+                api_calls += calls
 
                 filtered_tweets = []
                 for tweet in tweets:
@@ -872,12 +1058,12 @@ class TwitterWatchdog:
                 json.dump(json_data, f, ensure_ascii=False, indent=2, default=str)
             print(f"  JSON: {json_file}")
 
-        if "markdown" in self.output_config.get("formats", ["markdown"]):
-            md_file = output_path / f"ai_tweets_{timestamp}.md"
-            self.save_as_markdown(data, trending_tweets, md_file, source_username, stats, ai_summary_with_images)
-            print(f"  Markdown: {md_file}")
+        # Markdown 报告（始终生成）
+        md_file = output_path / f"ai_tweets_{timestamp}.md"
+        self.save_as_markdown(data, trending_tweets, md_file, source_username, stats, ai_summary_with_images)
+        print(f"  Markdown: {md_file}")
 
-        # HTML 报告（用于 web 部署和分享）
+        # HTML 报告（始终生成，用于 web 部署和分享）
         html_file = output_path / f"ai_tweets_{timestamp}.html"
         self.save_as_html(html_file, ai_summary_with_images, timestamp)
         # 同时生成/覆盖 latest.html 方便直接访问
@@ -892,166 +1078,315 @@ class TwitterWatchdog:
 
     @staticmethod
     def _html_page(title, subtitle, body_html):
-        """生成自包含 HTML 页面（sticky 导航 + 锚点跳转 + 暗色模式）"""
+        """生成自包含 HTML 页面（sticky 导航 + 主题切换 + 暗色模式 + 回到顶部）"""
         return f"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="auto">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title}</title>
 <style>
   :root {{
-    --bg: #fafafa; --card: #fff; --text: #1a1a1a; --muted: #666;
-    --border: #e5e5e5; --accent: #2563eb; --accent-light: #eff6ff;
-    --nav-bg: rgba(250,250,250,0.85);
-    --tag-product: #dbeafe; --tag-model: #fce7f3; --tag-dev: #d1fae5;
-    --tag-industry: #fef3c7; --tag-research: #ede9fe;
-    --tag-product-t: #1d4ed8; --tag-model-t: #be185d; --tag-dev-t: #047857;
-    --tag-industry-t: #b45309; --tag-research-t: #6d28d9;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04);
+    --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-med: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }}
+  [data-theme="light"], :root {{
+    --bg-primary: #fafaf9; --bg-secondary: #ffffff; --bg-tertiary: #f5f5f4;
+    --bg-nav: rgba(250,250,249,0.82);
+    --text-primary: #1c1917; --text-secondary: #57534e; --text-tertiary: #a8a29e;
+    --border-primary: #e7e5e4; --border-secondary: #d6d3d1;
+    --accent: #4338ca; --accent-hover: #3730a3; --accent-subtle: rgba(67,56,202,0.08);
+    --highlight-bg: linear-gradient(135deg, #faf5ff 0%, #f0f9ff 50%, #f0fdf4 100%);
+    --highlight-border: #e9d5ff;
+    --tag-product-bg: #eff6ff; --tag-product-text: #1e40af; --tag-product-border: #bfdbfe;
+    --tag-model-bg: #fdf2f8; --tag-model-text: #9d174d; --tag-model-border: #fbcfe8;
+    --tag-dev-bg: #ecfdf5; --tag-dev-text: #065f46; --tag-dev-border: #a7f3d0;
+    --tag-industry-bg: #fffbeb; --tag-industry-text: #92400e; --tag-industry-border: #fde68a;
+    --tag-research-bg: #f5f3ff; --tag-research-text: #5b21b6; --tag-research-border: #ddd6fe;
+    --dot-1: #6366f1; --dot-2: #8b5cf6; --dot-3: #a78bfa; --dot-4: #c084fc; --dot-5: #6366f1;
+    --back-top-bg: rgba(255,255,255,0.9); --back-top-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    --scrollbar-thumb: #d6d3d1;
+  }}
+  [data-theme="dark"] {{
+    --bg-primary: #0c0a09; --bg-secondary: #1c1917; --bg-tertiary: #292524;
+    --bg-nav: rgba(12,10,9,0.82);
+    --text-primary: #fafaf9; --text-secondary: #a8a29e; --text-tertiary: #78716c;
+    --border-primary: #292524; --border-secondary: #44403c;
+    --accent: #818cf8; --accent-hover: #a5b4fc; --accent-subtle: rgba(129,140,248,0.1);
+    --highlight-bg: linear-gradient(135deg, rgba(88,28,135,0.15) 0%, rgba(30,58,138,0.15) 50%, rgba(6,78,59,0.12) 100%);
+    --highlight-border: #581c87;
+    --tag-product-bg: rgba(37,99,235,0.15); --tag-product-text: #93c5fd; --tag-product-border: rgba(37,99,235,0.3);
+    --tag-model-bg: rgba(219,39,119,0.15); --tag-model-text: #f9a8d4; --tag-model-border: rgba(219,39,119,0.3);
+    --tag-dev-bg: rgba(5,150,105,0.15); --tag-dev-text: #6ee7b7; --tag-dev-border: rgba(5,150,105,0.3);
+    --tag-industry-bg: rgba(217,119,6,0.15); --tag-industry-text: #fcd34d; --tag-industry-border: rgba(217,119,6,0.3);
+    --tag-research-bg: rgba(124,58,237,0.15); --tag-research-text: #c4b5fd; --tag-research-border: rgba(124,58,237,0.3);
+    --dot-1: #818cf8; --dot-2: #a78bfa; --dot-3: #c084fc; --dot-4: #e879f9; --dot-5: #818cf8;
+    --back-top-bg: rgba(28,25,23,0.9); --back-top-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    --scrollbar-thumb: #44403c;
   }}
   @media (prefers-color-scheme: dark) {{
-    :root {{
-      --bg: #0f0f0f; --card: #1a1a1a; --text: #e5e5e5; --muted: #999;
-      --border: #2a2a2a; --accent: #60a5fa; --accent-light: #1e293b;
-      --nav-bg: rgba(15,15,15,0.85);
-      --tag-product: #1e3a5f; --tag-model: #4a1942; --tag-dev: #14432a;
-      --tag-industry: #4a3728; --tag-research: #2e1f5e;
-      --tag-product-t: #93c5fd; --tag-model-t: #f9a8d4; --tag-dev-t: #6ee7b7;
-      --tag-industry-t: #fcd34d; --tag-research-t: #c4b5fd;
+    [data-theme="auto"] {{
+      --bg-primary: #0c0a09; --bg-secondary: #1c1917; --bg-tertiary: #292524;
+      --bg-nav: rgba(12,10,9,0.82);
+      --text-primary: #fafaf9; --text-secondary: #a8a29e; --text-tertiary: #78716c;
+      --border-primary: #292524; --border-secondary: #44403c;
+      --accent: #818cf8; --accent-hover: #a5b4fc; --accent-subtle: rgba(129,140,248,0.1);
+      --highlight-bg: linear-gradient(135deg, rgba(88,28,135,0.15) 0%, rgba(30,58,138,0.15) 50%, rgba(6,78,59,0.12) 100%);
+      --highlight-border: #581c87;
+      --tag-product-bg: rgba(37,99,235,0.15); --tag-product-text: #93c5fd; --tag-product-border: rgba(37,99,235,0.3);
+      --tag-model-bg: rgba(219,39,119,0.15); --tag-model-text: #f9a8d4; --tag-model-border: rgba(219,39,119,0.3);
+      --tag-dev-bg: rgba(5,150,105,0.15); --tag-dev-text: #6ee7b7; --tag-dev-border: rgba(5,150,105,0.3);
+      --tag-industry-bg: rgba(217,119,6,0.15); --tag-industry-text: #fcd34d; --tag-industry-border: rgba(217,119,6,0.3);
+      --tag-research-bg: rgba(124,58,237,0.15); --tag-research-text: #c4b5fd; --tag-research-border: rgba(124,58,237,0.3);
+      --dot-1: #818cf8; --dot-2: #a78bfa; --dot-3: #c084fc; --dot-4: #e879f9; --dot-5: #818cf8;
+      --back-top-bg: rgba(28,25,23,0.9); --back-top-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      --scrollbar-thumb: #44403c;
     }}
   }}
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  html {{ scroll-behavior: smooth; scroll-padding-top: 64px; }}
+  *, *::before, *::after {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  html {{ scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-    background: var(--bg); color: var(--text); line-height: 1.7;
-    max-width: 820px; margin: 0 auto; padding: 40px 24px 80px;
+    font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-primary);
+    line-height: 1.7; -webkit-font-smoothing: antialiased; overflow-x: hidden;
   }}
-  /* ── sticky nav ── */
+  ::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+  ::-webkit-scrollbar-track {{ background: transparent; }}
+  ::-webkit-scrollbar-thumb {{ background: var(--scrollbar-thumb); border-radius: 3px; }}
+  .page-container {{ max-width: 860px; margin: 0 auto; padding: 0 28px; }}
   .sticky-nav {{
-    position: sticky; top: 0; z-index: 100;
-    background: var(--nav-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-    margin: 0 -24px; padding: 12px 24px;
+    position: sticky; top: 0; z-index: 1000;
+    background: var(--bg-nav); backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border-bottom: 1px solid var(--border-primary); transition: box-shadow var(--transition-med);
+  }}
+  .sticky-nav.scrolled {{ box-shadow: 0 1px 8px rgba(0,0,0,0.06); }}
+  .sticky-nav-inner {{
+    max-width: 860px; margin: 0 auto; padding: 0 28px;
+    display: flex; align-items: center; gap: 6px; height: 52px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }}
+  .sticky-nav-inner::-webkit-scrollbar {{ display: none; }}
+  .nav-brand {{ font-size: 14px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-primary); white-space: nowrap; flex-shrink: 0; padding-right: 8px; }}
+  .nav-divider {{ width: 1px; height: 18px; background: var(--border-secondary); flex-shrink: 0; margin: 0 4px; }}
+  .nav-link {{
+    display: inline-flex; align-items: center; padding: 10px 14px; border-radius: 99px;
+    font-size: 13px; font-weight: 500; text-decoration: none; color: var(--text-secondary);
+    background: transparent; border: 1px solid transparent; white-space: nowrap;
+    flex-shrink: 0; cursor: pointer; transition: all var(--transition-fast); user-select: none;
+    min-height: 44px;
+  }}
+  .nav-link:hover {{ color: var(--text-primary); background: var(--bg-tertiary); }}
+  .nav-link.active {{ color: var(--accent); background: var(--accent-subtle); font-weight: 600; }}
+  .nav-actions {{ margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }}
+  .theme-toggle {{
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border-primary);
+    background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all var(--transition-fast); flex-shrink: 0;
+  }}
+  .theme-toggle:hover {{ border-color: var(--border-secondary); color: var(--text-primary); box-shadow: var(--shadow-sm); }}
+  .theme-toggle svg {{ width: 16px; height: 16px; }}
+  .theme-toggle .icon-moon, .theme-toggle .icon-sun {{ display: none; }}
+  [data-resolved-theme="light"] .theme-toggle .icon-moon {{ display: block; }}
+  [data-resolved-theme="dark"] .theme-toggle .icon-sun {{ display: block; }}
+  .page-header {{ padding: 48px 0 40px; border-bottom: 1px solid var(--border-primary); margin-bottom: 40px; }}
+  .page-header h1 {{ font-size: 32px; font-weight: 800; letter-spacing: -0.8px; line-height: 1.2; }}
+  .page-header .subtitle {{ margin-top: 10px; font-size: 15px; color: var(--text-secondary); }}
+  .page-header .date-badge {{
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 14px;
+    padding: 5px 12px; border-radius: 99px; background: var(--accent-subtle);
+    color: var(--accent); font-size: 12px; font-weight: 600; letter-spacing: 0.2px;
+  }}
+  .page-header .date-badge svg {{ width: 14px; height: 14px; }}
+  .highlights-section {{ margin-bottom: 48px; }}
+  .highlights-card {{
+    background: var(--highlight-bg); border: 1px solid var(--highlight-border);
+    border-radius: var(--radius-lg); padding: 28px 28px 20px; position: relative; overflow: hidden;
+  }}
+  .highlights-card::before {{
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa, #c084fc, #e879f9);
+    border-radius: 3px 3px 0 0;
+  }}
+  .highlights-title {{ font-size: 16px; font-weight: 700; margin-bottom: 18px; display: flex; align-items: center; gap: 8px; }}
+  .highlights-title svg {{ width: 18px; height: 18px; color: var(--accent); }}
+  .highlights-list {{ list-style: none; display: flex; flex-direction: column; }}
+  .highlights-list li {{
+    position: relative; padding: 12px 0 12px 24px; font-size: 14.5px; line-height: 1.65;
+    border-bottom: 1px solid rgba(0,0,0,0.06);
+  }}
+  [data-resolved-theme="dark"] .highlights-list li {{ border-bottom-color: rgba(255,255,255,0.06); }}
+  .highlights-list li:last-child {{ border-bottom: none; padding-bottom: 4px; }}
+  .highlights-list li::before {{ content: ""; position: absolute; left: 2px; top: 19px; width: 7px; height: 7px; border-radius: 50%; }}
+  .highlights-list li:nth-child(1)::before {{ background: var(--dot-1); }}
+  .highlights-list li:nth-child(2)::before {{ background: var(--dot-2); }}
+  .highlights-list li:nth-child(3)::before {{ background: var(--dot-3); }}
+  .highlights-list li:nth-child(4)::before {{ background: var(--dot-4); }}
+  .highlights-list li:nth-child(5)::before {{ background: var(--dot-5); }}
+  .category-section {{ margin-bottom: 48px; }}
+  .category-section-header {{
     display: flex; align-items: center; gap: 12px;
-    overflow-x: auto; -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border-primary);
   }}
-  .sticky-nav::-webkit-scrollbar {{ display: none; }}
-  .sticky-nav .nav-title {{
-    font-size: 15px; font-weight: 700; white-space: nowrap; flex-shrink: 0;
-    color: var(--text);
+  .category-section-header h2 {{ font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }}
+  .cat-tag {{
+    font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 99px;
+    letter-spacing: 0.4px; text-transform: uppercase; border: 1px solid;
   }}
-  .sticky-nav .nav-sep {{
-    width: 1px; height: 20px; background: var(--border); flex-shrink: 0;
+  .cat-tag-product {{ background: var(--tag-product-bg); color: var(--tag-product-text); border-color: var(--tag-product-border); }}
+  .cat-tag-model {{ background: var(--tag-model-bg); color: var(--tag-model-text); border-color: var(--tag-model-border); }}
+  .cat-tag-dev {{ background: var(--tag-dev-bg); color: var(--tag-dev-text); border-color: var(--tag-dev-border); }}
+  .cat-tag-industry {{ background: var(--tag-industry-bg); color: var(--tag-industry-text); border-color: var(--tag-industry-border); }}
+  .cat-tag-research {{ background: var(--tag-research-bg); color: var(--tag-research-text); border-color: var(--tag-research-border); }}
+  .category-section-header .item-count {{ font-size: 12px; color: var(--text-tertiary); margin-left: auto; }}
+  .news-card {{
+    background: var(--bg-secondary); border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md); padding: 22px 24px; margin-bottom: 14px;
+    transition: all var(--transition-fast); position: relative;
   }}
-  .sticky-nav a {{
-    display: inline-block; padding: 5px 14px; border-radius: 20px; font-size: 13px;
-    text-decoration: none; color: var(--muted); background: transparent;
-    border: 1px solid transparent; transition: all .15s; white-space: nowrap; flex-shrink: 0;
+  .news-card:hover {{ border-color: var(--border-secondary); box-shadow: var(--shadow-md); transform: translateY(-1px); }}
+  .news-card:last-child {{ margin-bottom: 0; }}
+  .news-card-title {{ font-size: 15.5px; font-weight: 600; line-height: 1.5; margin-bottom: 8px; letter-spacing: -0.2px; }}
+  .news-card-title a {{ color: var(--accent); text-decoration: none; transition: all var(--transition-fast); }}
+  .news-card-title a:hover {{ text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1.5px; }}
+  .news-card-title a::after {{ content: " \\2197"; font-size: 12px; color: var(--text-tertiary); font-weight: 400; transition: color var(--transition-fast); }}
+  .news-card-title a:hover::after {{ color: var(--accent); }}
+  .news-card-desc {{ font-size: 14px; line-height: 1.7; color: var(--text-secondary); }}
+  .news-card-img {{ margin-top: 16px; border-radius: var(--radius-sm); overflow: hidden; text-align: center; }}
+  .news-card-img img {{ max-width: 100%; max-height: 400px; object-fit: contain; border-radius: var(--radius-sm); display: block; margin: 0 auto; }}
+  .page-footer {{ margin-top: 56px; padding: 24px 0; border-top: 1px solid var(--border-primary); text-align: center; }}
+  .page-footer p {{ font-size: 13px; color: var(--text-tertiary); line-height: 1.6; }}
+  .footer-dot {{ display: inline-block; width: 3px; height: 3px; background: var(--text-tertiary); border-radius: 50%; vertical-align: middle; margin: 0 10px; }}
+  .back-to-top {{
+    position: fixed; bottom: 28px; right: 28px; width: 40px; height: 40px;
+    border-radius: 50%; background: var(--back-top-bg); border: 1px solid var(--border-primary);
+    color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--back-top-shadow); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: all var(--transition-fast); opacity: 0; visibility: hidden; transform: translateY(8px); z-index: 999;
   }}
-  .sticky-nav a:hover {{ color: var(--accent); border-color: var(--border); }}
-  .sticky-nav a.active {{
-    color: #fff; background: var(--accent); border-color: var(--accent);
+  .back-to-top.visible {{ opacity: 1; visibility: visible; transform: translateY(0); }}
+  .back-to-top:hover {{ border-color: var(--border-secondary); color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 20px rgba(0,0,0,0.12); }}
+  .back-to-top svg {{ width: 18px; height: 18px; }}
+  @media (max-width: 640px) {{
+    .page-container {{ padding: 0 16px; }}
+    .sticky-nav-inner {{ padding: 0 16px; height: 52px; }}
+    .page-header {{ padding: 28px 0 24px; margin-bottom: 24px; }}
+    .page-header h1 {{ font-size: 22px; }}
+    .page-header .subtitle {{ font-size: 14px; }}
+    .highlights-card {{ padding: 20px 18px 14px; }}
+    .highlights-list li {{ font-size: 14px; }}
+    .category-section {{ margin-bottom: 32px; }}
+    .category-section-header h2 {{ font-size: 18px; }}
+    .news-card {{ padding: 16px; margin-bottom: 12px; }}
+    .news-card-title {{ font-size: 15px; }}
+    .news-card-desc {{ font-size: 14px; }}
+    .news-card-img img {{ max-height: 300px; }}
+    .back-to-top {{ bottom: 20px; right: 16px; width: 44px; height: 44px; }}
+    .theme-toggle {{ width: 44px; height: 44px; }}
+    .nav-actions {{ margin-left: 4px; }}
   }}
-  header {{ margin-top: 24px; margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }}
-  header h1 {{ font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }}
-  header .meta {{ color: var(--muted); font-size: 14px; margin-top: 8px; }}
-  .highlights {{ margin-bottom: 36px; }}
-  .highlights h2 {{ font-size: 20px; font-weight: 700; margin-bottom: 16px; }}
-  .highlights ul {{ list-style: none; }}
-  .highlights li {{
-    position: relative; padding: 10px 0 10px 20px; font-size: 15px;
-    border-bottom: 1px solid var(--border);
-  }}
-  .highlights li::before {{
-    content: ""; position: absolute; left: 0; top: 18px;
-    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
-  }}
-  .highlights li:last-child {{ border-bottom: none; }}
-  .category {{ margin-bottom: 40px; }}
-  .category-header {{
-    display: flex; align-items: center; gap: 10px;
-    margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--border);
-  }}
-  .category-header h2 {{ font-size: 20px; font-weight: 700; }}
-  .tag {{
-    font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 12px;
-    text-transform: uppercase; letter-spacing: 0.3px;
-  }}
-  .tag-product {{ background: var(--tag-product); color: var(--tag-product-t); }}
-  .tag-model {{ background: var(--tag-model); color: var(--tag-model-t); }}
-  .tag-dev {{ background: var(--tag-dev); color: var(--tag-dev-t); }}
-  .tag-industry {{ background: var(--tag-industry); color: var(--tag-industry-t); }}
-  .tag-research {{ background: var(--tag-research); color: var(--tag-research-t); }}
-  .item {{
-    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 20px; margin-bottom: 16px; transition: box-shadow .15s;
-  }}
-  .item:hover {{ box-shadow: 0 2px 12px rgba(0,0,0,0.06); }}
-  .item-title {{ font-size: 16px; font-weight: 600; margin-bottom: 8px; }}
-  .item-title a {{ color: var(--accent); text-decoration: none; }}
-  .item-title a:hover {{ text-decoration: underline; }}
-  .item-desc {{ font-size: 14.5px; line-height: 1.7; }}
-  .item-img {{
-    margin-top: 14px; border-radius: 8px; overflow: hidden;
-    background: var(--bg); text-align: center;
-  }}
-  .item-img img {{ max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 8px; }}
-  footer {{
-    margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border);
-    text-align: center; color: var(--muted); font-size: 13px;
-  }}
-  @media (max-width: 600px) {{
-    body {{ padding: 24px 16px 60px; }}
-    header h1 {{ font-size: 22px; }}
-    .item {{ padding: 16px; }}
-    .sticky-nav {{ margin: 0 -16px; padding: 10px 16px; }}
+  @media print {{
+    .sticky-nav, .back-to-top, .theme-toggle {{ display: none !important; }}
+    body {{ background: #fff; color: #000; }}
+    .news-card {{ break-inside: avoid; border: 1px solid #ddd; }}
   }}
 </style>
 </head>
 <body>
-<div class="sticky-nav" id="sticky-nav">
-  <span class="nav-title">AI 日报</span>
-  <span class="nav-sep"></span>
-</div>
-<header>
+<nav class="sticky-nav" id="sticky-nav">
+  <div class="sticky-nav-inner" id="sticky-nav-inner">
+    <span class="nav-brand">AI 日报</span>
+    <span class="nav-divider"></span>
+    <div class="nav-actions">
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="切换主题" title="切换深色/浅色模式">
+        <svg class="icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg class="icon-sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+    </div>
+  </div>
+</nav>
+<div class="page-container">
+<header class="page-header">
   <h1>{title}</h1>
-  <div class="meta">{subtitle}</div>
+  <div class="subtitle">人工智能领域今日要闻速览</div>
+  <div class="date-badge">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+    {subtitle}
+  </div>
 </header>
 {body_html}
-<footer>
-  由 Twitter Watchdog 自动生成 &nbsp;|&nbsp; 数据来源: Twitter 关注列表 + 全网热门
+</div>
+<footer class="page-footer">
+  <div class="page-container">
+    <p>由 Twitter Watchdog 自动生成<span class="footer-dot"></span>数据来源: Twitter 关注列表 + 全网热门</p>
+  </div>
 </footer>
+<button class="back-to-top" id="back-to-top" type="button" aria-label="返回顶部" title="返回顶部">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+</button>
 <script>
 (function() {{
-  // 往 sticky-nav 注入锚点链接
-  var nav = document.getElementById('sticky-nav');
+  var html = document.documentElement;
+  var themeBtn = document.getElementById('theme-toggle');
+  function getSystemTheme() {{ return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }}
+  function resolveTheme() {{ var t = html.getAttribute('data-theme'); return t === 'auto' ? getSystemTheme() : t; }}
+  function applyResolvedTheme() {{ html.setAttribute('data-resolved-theme', resolveTheme()); }}
+  applyResolvedTheme();
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {{ applyResolvedTheme(); }});
+  themeBtn.addEventListener('click', function() {{
+    var next = resolveTheme() === 'light' ? 'dark' : 'light';
+    html.setAttribute('data-theme', next); applyResolvedTheme();
+  }});
+  var navOuter = document.getElementById('sticky-nav');
+  var navInner = document.getElementById('sticky-nav-inner');
   var sections = document.querySelectorAll('[data-nav]');
+  var navActions = navInner.querySelector('.nav-actions');
   sections.forEach(function(sec) {{
     var a = document.createElement('a');
-    a.href = '#' + sec.id;
+    a.className = 'nav-link'; a.href = '#' + sec.id;
     a.textContent = sec.getAttribute('data-nav');
     a.setAttribute('data-target', sec.id);
-    nav.appendChild(a);
-  }});
-  // Intersection Observer 高亮当前分类
-  var links = nav.querySelectorAll('a[data-target]');
-  if (!links.length) return;
-  var observer = new IntersectionObserver(function(entries) {{
-    entries.forEach(function(entry) {{
-      if (entry.isIntersecting) {{
-        links.forEach(function(l) {{ l.classList.remove('active'); }});
-        var active = nav.querySelector('a[data-target="' + entry.target.id + '"]');
-        if (active) {{
-          active.classList.add('active');
-          // 滚动 nav 确保 active 可见
-          active.scrollIntoView({{ block: 'nearest', inline: 'center', behavior: 'smooth' }});
-        }}
+    a.addEventListener('click', function(e) {{
+      e.preventDefault();
+      var target = document.getElementById(this.getAttribute('data-target'));
+      if (target) {{
+        var navH = navOuter.offsetHeight;
+        var top = target.getBoundingClientRect().top + window.pageYOffset - navH - 16;
+        window.scrollTo({{ top: top, behavior: 'smooth' }});
       }}
     }});
-  }}, {{ rootMargin: '-80px 0px -60% 0px', threshold: 0 }});
-  sections.forEach(function(sec) {{ observer.observe(sec); }});
+    navInner.insertBefore(a, navActions);
+  }});
+  var navLinks = navInner.querySelectorAll('.nav-link[data-target]');
+  function scrollNavTo(el) {{
+    var r = navInner.getBoundingClientRect(), e = el.getBoundingClientRect();
+    navInner.scrollBy({{ left: e.left - r.left - (r.width / 2) + (e.width / 2), behavior: 'smooth' }});
+  }}
+  if (navLinks.length) {{
+    var observer = new IntersectionObserver(function(entries) {{
+      entries.forEach(function(entry) {{
+        if (entry.isIntersecting) {{
+          navLinks.forEach(function(l) {{ l.classList.remove('active'); }});
+          var active = navInner.querySelector('.nav-link[data-target="' + entry.target.id + '"]');
+          if (active) {{ active.classList.add('active'); scrollNavTo(active); }}
+        }}
+      }});
+    }}, {{ rootMargin: '-80px 0px -60% 0px', threshold: 0 }});
+    sections.forEach(function(sec) {{ observer.observe(sec); }});
+  }}
+  window.addEventListener('scroll', function() {{
+    if (window.pageYOffset > 10) navOuter.classList.add('scrolled');
+    else navOuter.classList.remove('scrolled');
+  }}, {{ passive: true }});
+  var btt = document.getElementById('back-to-top');
+  window.addEventListener('scroll', function() {{
+    if (window.pageYOffset > 400) btt.classList.add('visible');
+    else btt.classList.remove('visible');
+  }}, {{ passive: true }});
+  btt.addEventListener('click', function(e) {{ e.preventDefault(); window.scrollTo({{ top: 0, behavior: 'smooth' }}); }});
 }})();
 </script>
 </body>
@@ -1064,7 +1399,10 @@ class TwitterWatchdog:
         window_desc = ""
         if self.hours_ago:
             cutoff = now - timedelta(hours=self.hours_ago)
-            window_desc = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
+            if cutoff.date() == now.date():
+                window_desc = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
+            else:
+                window_desc = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
 
         body_html = self._summary_md_to_html(ai_summary_with_images or "暂无内容")
         title = f"AI 日报 — {date_str}"
@@ -1074,18 +1412,29 @@ class TwitterWatchdog:
             f.write(html)
 
     def _summary_md_to_html(self, md_text):
-        """将分类结构的 markdown 总结转为 HTML"""
+        """将分类结构的 markdown 总结转为 HTML（匹配新版 UI 模板）"""
         import html as html_mod
 
+        # 星标 SVG 图标
+        star_svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
+
         category_tags = {
-            "AI 产品与工具": ("product", "tag-product"),
-            "AI 模型与技术": ("model", "tag-model"),
-            "AI 开发者生态": ("dev", "tag-dev"),
-            "AI 行业动态": ("industry", "tag-industry"),
-            "AI 研究与观点": ("research", "tag-research"),
+            "AI 产品与工具": ("product", "cat-tag-product", "Product"),
+            "AI 模型与技术": ("model", "cat-tag-model", "Model"),
+            "AI 开发者生态": ("dev", "cat-tag-dev", "Dev"),
+            "AI 行业动态": ("industry", "cat-tag-industry", "Industry"),
+            "AI 研究与观点": ("research", "cat-tag-research", "Research"),
         }
 
-        sections = []       # [(type, title, content_lines)]
+        short_labels = {
+            "AI 产品与工具": "产品与工具",
+            "AI 模型与技术": "模型与技术",
+            "AI 开发者生态": "开发者生态",
+            "AI 行业动态": "行业动态",
+            "AI 研究与观点": "研究与观点",
+        }
+
+        sections = []
         current_title = None
         current_lines = []
 
@@ -1106,42 +1455,38 @@ class TwitterWatchdog:
             if title == "本期要点":
                 bullets = [l.lstrip("- ").strip() for l in lines if l.strip().startswith("- ")]
                 if bullets:
-                    parts.append('<div class="highlights" id="highlights" data-nav="本期要点">')
-                    parts.append('<h2>本期要点</h2><ul>')
+                    parts.append(f'<section class="highlights-section" id="highlights" data-nav="本期要点">')
+                    parts.append(f'<div class="highlights-card">')
+                    parts.append(f'<div class="highlights-title">{star_svg} 本期要点</div>')
+                    parts.append('<ul class="highlights-list">')
                     for b in bullets:
                         parts.append(f"<li>{html_mod.escape(b)}</li>")
-                    parts.append("</ul></div>")
+                    parts.append("</ul></div></section>")
                 continue
 
             tag_info = category_tags.get(title)
             if not tag_info:
                 continue
-            tag_id, tag_class = tag_info
+            tag_id, tag_class, tag_label = tag_info
             anchor = f"cat-{tag_id}"
-            # 短标签用于导航栏
-            short_labels = {
-                "AI 产品与工具": "产品与工具",
-                "AI 模型与技术": "模型与技术",
-                "AI 开发者生态": "开发者生态",
-                "AI 行业动态": "行业动态",
-                "AI 研究与观点": "研究与观点",
-            }
             nav_label = short_labels.get(title, title)
 
-            parts.append(f'<div class="category" id="{anchor}" data-nav="{html_mod.escape(nav_label)}">')
-            parts.append(f'<div class="category-header"><h2>{html_mod.escape(title)}</h2>'
-                         f'<span class="tag {tag_class}">{tag_id}</span></div>')
+            # 统计条目数
+            item_count = sum(1 for l in lines if l.strip().startswith("- ["))
 
-            # 解析条目
+            parts.append(f'<section class="category-section" id="{anchor}" data-nav="{html_mod.escape(nav_label)}">')
+            parts.append(f'<div class="category-section-header">'
+                         f'<h2>{html_mod.escape(title)}</h2>'
+                         f'<span class="cat-tag {tag_class}">{tag_label}</span>'
+                         f'<span class="item-count">{item_count} 条</span></div>')
+
             i = 0
             while i < len(lines):
                 line = lines[i].strip()
                 if line.startswith("- ["):
-                    # 提取标题、URL、描述
                     m = re.match(r'^- \[(.+?)\]\((.+?)\)[。，,.]\s*(.*)$', line, re.DOTALL)
                     if m:
                         item_title, item_url, item_desc = m.groups()
-                        # 找图片（往后扫描）
                         img_html = ""
                         j = i + 1
                         while j < len(lines):
@@ -1150,7 +1495,7 @@ class TwitterWatchdog:
                                 img_m = re.match(r'!\[.*?\]\((.+?)\)', sl)
                                 if img_m:
                                     img_src = img_m.group(1)
-                                    img_html = f'<div class="item-img"><img src="{html_mod.escape(img_src)}" alt="" loading="lazy"></div>'
+                                    img_html = f'<div class="news-card-img"><img src="{html_mod.escape(img_src)}" alt="" loading="lazy"></div>'
                                 j += 1
                             elif sl == "":
                                 j += 1
@@ -1158,16 +1503,17 @@ class TwitterWatchdog:
                                 break
                         i = j
 
-                        parts.append('<div class="item">')
-                        parts.append(f'<div class="item-title"><a href="{html_mod.escape(item_url)}" target="_blank" rel="noopener">{html_mod.escape(item_title)}</a></div>')
+                        parts.append('<div class="news-card">')
+                        parts.append(f'<div class="news-card-title"><a href="{html_mod.escape(item_url)}" target="_blank" rel="noopener">{html_mod.escape(item_title)}</a></div>')
                         if item_desc.strip():
-                            parts.append(f'<div class="item-desc">{html_mod.escape(item_desc.strip())}</div>')
-                        parts.append(img_html)
+                            parts.append(f'<div class="news-card-desc">{html_mod.escape(item_desc.strip())}</div>')
+                        if img_html:
+                            parts.append(img_html)
                         parts.append('</div>')
                         continue
                 i += 1
 
-            parts.append("</div>")
+            parts.append("</section>")
 
         return "\n".join(parts)
 
@@ -1208,7 +1554,11 @@ class TwitterWatchdog:
             f.write(f"**抓取时间**: {ts} (UTC+8)\n")
             if self.hours_ago:
                 cutoff = now - timedelta(hours=self.hours_ago)
-                f.write(f"**时间窗口**: {cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}\n")
+                if cutoff.date() == now.date():
+                    win = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
+                else:
+                    win = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
+                f.write(f"**时间窗口**: {win}\n")
             f.write(f"**关注列表 AI 推文**: {stats['new_tweets_count']} 条\n")
             if trending_tweets:
                 f.write(f"**全网热门 AI 推文**: {stats.get('trending_count', 0)} 条\n")
@@ -1260,7 +1610,11 @@ class TwitterWatchdog:
             f.write(f"**监控账户**: @{source_username}\n")
             if self.hours_ago:
                 cutoff = now - timedelta(hours=self.hours_ago)
-                f.write(f"**时间窗口**: {cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}\n")
+                if cutoff.date() == now.date():
+                    win = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
+                else:
+                    win = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
+                f.write(f"**时间窗口**: {win}\n")
             f.write(f"**关注列表 AI 推文**: {stats['new_tweets_count']}\n")
             if trending_tweets:
                 f.write(f"**全网热门 AI 推文**: {stats.get('trending_count', 0)}\n")
