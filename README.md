@@ -234,6 +234,45 @@ python3 scripts/twitter_watchdog.py report --monthly $(date -v-1m +%Y-%m)
 | Claude API — 周报/月报（按需生成） | ~$0.02/次 | - | ~$0.1 |
 | **合计** | - | **~$0.12** | **~$3.7** |
 
+## Claude Code Skill
+
+本项目可作为 [Claude Code](https://github.com/anthropics/claude-code) 的 Skill 使用，实现自然语言触发：
+
+```
+"看看最近有什么AI新闻"
+"抓取最近8小时的AI推文"
+"生成AI周报"
+"生成2月AI月报"
+```
+
+### 安装为 Claude Code Skill
+
+1. 将项目复制到 Claude Code skills 目录：
+
+```bash
+cp -r . ~/.claude/skills/twitter-watchdog/
+```
+
+2. 安装依赖：
+
+```bash
+cd ~/.claude/skills/twitter-watchdog
+python3 -m venv venv
+source venv/bin/activate
+pip install requests pyyaml
+```
+
+3. 配置：
+
+```bash
+cp config/config.yaml.example config/config.yaml
+# 编辑 config.yaml，填入 API Key 和用户名
+```
+
+4. 将 `SKILL.md` 放在 skill 根目录即可，Claude Code 会自动识别并加载。
+
+详细的 Skill 配置和命令说明见 [SKILL.md](SKILL.md)。
+
 ## License
 
 MIT
