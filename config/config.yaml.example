@@ -1,8 +1,9 @@
 # Twitter Watchdog 配置文件
-# 架构：X 官方 API 获取关注列表 + twitterapi.io 抓取推文 + Claude AI 智能筛选总结
+# 三层架构：scrape（抓取）→ analyze（AI 分析）→ report（报告生成）
+# 只需两个 API Key：twitterapi.io + Claude API
 
 # X 官方 API 凭证（可选，作为获取关注列表的 fallback）
-# 现在 twitterapi.io 也能获取关注列表，所以此项非必填
+# twitterapi.io 也能获取关注列表，所以此项非必填
 # 如果配置了，会在 twitterapi.io 失败时作为备选
 # 申请地址：https://developer.twitter.com/
 twitter_api:
@@ -22,12 +23,15 @@ twitter:
   exclude_retweets: true               # 排除转推
 
 # 输出设置
+# 三层架构输出：output/raw/ → output/analysis/ → output/reports/
 output:
-  directory: "./output"                # 输出目录
+  directory: "./output"                # 输出根目录
   formats: ["markdown", "json"]        # 输出格式
   create_summary: true                 # 创建汇总报告
 
-# 内容过滤（当 ai_filter 关闭时使用关键词匹配）
+# 内容过滤（Layer 2 analyze 阶段使用）
+# 当 ai_filter: true 时，关键词预过滤跳过，交给 Claude 判断
+# 当 ai_filter: false 时，关键词预过滤生效
 filters:
   enabled: true
   keywords:
@@ -58,7 +62,7 @@ filters:
   min_retweets: 0
   language: "all"
 
-# AI 智能总结（Claude API）
+# AI 智能总结（Claude API，Layer 2 analyze 使用）
 ai_summary:
   enabled: true
   ai_filter: true                      # 由 Claude 判断推文是否与 AI 相关（替代关键词匹配）
@@ -67,7 +71,7 @@ ai_summary:
   model: "claude-sonnet-4-5-20250929"  # 模型选择（sonnet 性价比高）
   max_tokens: 4096                     # 最大输出 token 数
 
-# 全网热门 AI 搜索（twitterapi.io Advanced Search）
+# 全网热门 AI 搜索（Layer 1 scrape 使用，twitterapi.io Advanced Search）
 trending_search:
   enabled: true
   query: "(AI OR LLM OR GPT OR Claude OR OpenAI OR AGI OR 大模型) min_faves:50 -is:retweet -is:reply"
@@ -89,7 +93,7 @@ schedule:
 # 高级设置
 advanced:
   max_followings: 0                    # 0 表示不限制
-  followings_cache_hours: 24           # 关注列表缓存时长（小时），减少 X API 调用
+  followings_cache_hours: 24           # 关注列表缓存时长（小时），减少 API 调用
   timeout_seconds: 30
   retry_attempts: 3
   deduplicate: true

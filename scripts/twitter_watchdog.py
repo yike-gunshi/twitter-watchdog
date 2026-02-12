@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
 """
-Twitter Watchdog - 定时抓取 Twitter 关注列表中的 AI 相关推文
+Twitter Watchdog - 三层架构 AI 推文监控工具
 
-架构：
+架构（三层分离）：
+  Layer 1 - 抓取 (scrape):  twitterapi.io → 原始推文 → output/raw/*.json
+  Layer 2 - 分析 (analyze): raw JSON → Claude AI 筛选+总结 → output/analysis/*.json
+  Layer 3 - 报告 (report):  analysis JSON → HTML/MD 报告 → output/reports/*.{html,md}
+
+数据源：
   - X 官方 API (Bearer Token) → 获取关注列表（免费，带本地缓存）
   - twitterapi.io → 抓取推文内容（$0.15/1k，经济实惠）
-  - Claude API → AI 智能总结（可选）
+  - Claude API → AI 智能筛选+总结
 
 时区：Asia/Shanghai (UTC+8)
 
-调度策略（建议通过 OpenClaw 或 launchd 实现）：
-  08:00  --hours-ago 8    # 推送 00:00~08:00 的推文
-  12:00  --hours-ago 4    # 推送 08:00~12:00 的推文
-  18:00  --hours-ago 6    # 推送 12:00~18:00 的推文
-  21:00  --hours-ago 3    # 推送 18:00~21:00 的推文
-  00:00  --hours-ago 3    # 推送 21:00~00:00 的推文
-
 用法：
-  python3 twitter_watchdog.py [选项]
+  # Layer 1: 只抓取，存原始数据
+  python3 twitter_watchdog.py scrape [--hours-ago 6]
 
-  --hours-ago N           只保留最近 N 小时内的推文（配合调度使用）
-  --max-followings N      关注列表抓取范围（0=全部）
-  --tweets-per-user N     每个用户最多推文数
-  --trending-count N      热门推文最多条数
-  --trending-query "..."  热门搜索关键词（Twitter 搜索语法）
-  --min-faves N           热门推文最低点赞数
-  --language LANG         语言过滤（all/en/zh/ja...）
-  --exclude-users "a,b"   排除的用户名（逗号分隔）
-  --output-dir PATH       输出目录
-  --reset-state           重置去重状态，重新拉取全量
-  --no-trending           禁用热门搜索
-  --no-summary            禁用 AI 总结
+  # Layer 2: 分析原始数据，生成分析结果
+  python3 twitter_watchdog.py analyze [--hours-ago 6]
+  python3 twitter_watchdog.py analyze --source raw/20260212_140000.json
+  python3 twitter_watchdog.py analyze --from "2026-02-12 08:00" --to "2026-02-12 14:00"
+
+  # Layer 3: 从分析结果生成报告
+  python3 twitter_watchdog.py report [--source analysis/20260212_143000.json]
+  python3 twitter_watchdog.py report --daily 2026-02-12
+  python3 twitter_watchdog.py report --weekly 2026-02-10
+  python3 twitter_watchdog.py report --monthly 2026-02
+
+  # 流水线模式（向后兼容，等价于 scrape + analyze + report）
+  python3 twitter_watchdog.py [--hours-ago 6]
 """
 
 import os
@@ -90,8 +90,8 @@ class TwitterWatchdog:
             self.timeout = self.advanced_config.get("timeout_seconds", 30)
             self.state = self.load_state()
 
-            # 推文图片 URL 映射: tweet_url -> image_url
-            self.tweet_images = {}
+        # 推文图片 URL 映射: tweet_url -> image_url（所有模式都需要）
+        self.tweet_images = {}
 
     def apply_cli_overrides(self, args):
         """将 CLI 参数覆盖到 config"""
@@ -577,38 +577,7 @@ class TwitterWatchdog:
         ai_filter = summary_config.get("ai_filter", False)
 
         # 构建推文内容
-        content_parts = []
-        if followings_data:
-            content_parts.append("## 关注列表推文：")
-            for ud in followings_data:
-                uname = ud["user"]["username"]
-                for t in ud["tweets"]:
-                    tid = t.get("id", "")
-                    likes = t.get("likeCount", 0)
-                    views = t.get("viewCount", 0)
-                    text = t.get("text", "")[:200]
-                    url = t.get("url", "")
-                    quoted = t.get("quoted_tweet")
-                    quoted_info = ""
-                    if quoted:
-                        q_author = quoted.get("author", {}).get("userName", "?")
-                        q_text = quoted.get("text", "")[:150]
-                        quoted_info = f"\n  [引用 @{q_author}]: {q_text}"
-                    id_prefix = f"[ID:{tid}] " if ai_filter else ""
-                    content_parts.append(f"- {id_prefix}@{uname} ({views:,} views, {likes} likes): {text}{quoted_info}\n  URL: {url}")
-
-        if trending_tweets:
-            content_parts.append("\n## 全网热门 AI 推文：")
-            for t in trending_tweets:
-                tid = t.get("id", "")
-                author = t.get("author", {}).get("userName", "?")
-                likes = t.get("likeCount", 0)
-                views = t.get("viewCount", 0)
-                text = t.get("text", "")[:200]
-                url = t.get("url", "")
-                id_prefix = f"[ID:{tid}] " if ai_filter else ""
-                content_parts.append(f"- {id_prefix}@{author} ({views:,} views, {likes:,} likes): {text}\n  URL: {url}")
-
+        content_parts = self._build_tweet_lines(followings_data, trending_tweets, with_id=ai_filter)
         all_content = "\n".join(content_parts)
 
         window_desc = ""
@@ -659,42 +628,9 @@ class TwitterWatchdog:
 - 如果某个分类下没有内容，省略该分类
 - 不加前言或结尾总结段落"""
 
-        if ai_filter:
-            prompt = f"""你是一个 AI 行业信息整理员。以下是从 Twitter 抓取的推文列表{window_desc}。
-
-任务：
-1. 从所有推文中筛选出与 AI 领域、AI 工具、AI 行业相关的推文
-2. 生成结构化的分类日报
-
-读者画像：关注 AI 前沿动态的从业者。他们想从每条新闻中快速了解：发生了什么、谁发布的、核心内容（功能/指标/数据/价格）、怎么获取或有什么意义。
-
-{category_block}
-
-{rules_block}
-
-最后，输出你筛选出的所有 AI 相关推文的 ID 列表（JSON 格式）：
-```json
-{{"ai_tweet_ids": ["id1", "id2"]}}
-```
-
----
-{all_content}"""
-        else:
-            prompt = f"""你是一个 AI 行业信息整理员。以下是从 Twitter 抓取的 AI 相关推文{window_desc}。
-
-任务：生成结构化的分类日报。
-
-读者画像：关注 AI 前沿动态的从业者。他们想从每条新闻中快速了解：发生了什么、谁发布的、核心内容（功能/指标/数据/价格）、怎么获取或有什么意义。
-
-{category_block}
-
-{rules_block}
-
----
-{all_content}"""
-
         model = summary_config.get("model", "claude-sonnet-4-5-20250929")
         max_tokens = summary_config.get("max_tokens", 4096)
+        max_input_tokens = summary_config.get("max_input_tokens", 150000)
         api_url = f"{base_url.rstrip('/')}/v1/messages"
         headers = {
             "x-api-key": api_key,
@@ -702,65 +638,170 @@ class TwitterWatchdog:
             "content-type": "application/json",
         }
 
-        # 统计推文总数
-        tweet_count = sum(len(ud["tweets"]) for ud in (followings_data or [])) + len(trending_tweets or [])
-        # 大窗口 + ai_filter 模式：拆成两次调用（筛选 + 总结）
-        use_two_pass = ai_filter and tweet_count > 150
-
-        if use_two_pass:
-            return self._two_pass_filter_and_summarize(
+        if ai_filter:
+            return self._filter_and_summarize(
                 followings_data, trending_tweets, all_content, window_desc,
-                category_block, rules_block, model, max_tokens, api_url, headers
+                category_block, rules_block, model, max_tokens, max_input_tokens,
+                api_url, headers, base_url
+            )
+        else:
+            return self._batched_summarize(
+                all_content, window_desc, category_block, rules_block,
+                model, max_tokens, max_input_tokens, api_url, headers, base_url
             )
 
-        print(f"  调用 Claude ({model}) via {base_url}...")
-        try:
-            resp = requests.post(
-                api_url, headers=headers,
-                json={
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            response_text = result["content"][0]["text"]
-            usage = result.get("usage", {})
-            input_tokens = usage.get("input_tokens", 0)
-            output_tokens = usage.get("output_tokens", 0)
-            print(f"  AI 总结完成（{input_tokens} + {output_tokens} tokens）")
+    # ── Claude API 辅助方法 ──────────────────────────────
 
-            ai_tweet_ids = None
-            summary_text = response_text
+    @staticmethod
+    def _estimate_tokens(text):
+        """粗略估算文本 token 数（中英混合约 0.4 token/char）"""
+        return int(len(text) * 0.4)
 
-            if ai_filter:
-                json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
-                if json_match:
-                    try:
-                        id_data = json.loads(json_match.group(1))
-                        ai_tweet_ids = set(str(i) for i in id_data.get("ai_tweet_ids", []))
-                        print(f"  Claude 识别出 {len(ai_tweet_ids)} 条 AI 相关推文")
-                    except json.JSONDecodeError:
-                        print("  警告: 无法解析 AI 筛选结果，保留所有推文")
-                    summary_text = response_text[:json_match.start()].strip()
+    def _call_claude_api(self, prompt, model, max_tokens, api_url, headers,
+                         timeout=120, max_retries=3):
+        """调用 Claude API，自动重试 + 超时递增，返回 (response_text, usage_dict)"""
+        cur_timeout = timeout
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.post(
+                    api_url, headers=headers,
+                    json={
+                        "model": model,
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                    timeout=cur_timeout,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                return result["content"][0]["text"], result.get("usage", {})
+            except Exception as e:
+                if attempt < max_retries:
+                    wait = 10 * attempt          # 10s, 20s
+                    cur_timeout = int(cur_timeout * 1.5)  # 120→180→270
+                    print(f"    ⚠ 重试 ({attempt}/{max_retries}, {wait}s 后, "
+                          f"timeout→{cur_timeout}s): {type(e).__name__}")
+                    time.sleep(wait)
                 else:
-                    print("  警告: AI 未返回筛选结果，保留所有推文")
+                    raise
 
-            return summary_text, ai_tweet_ids
-        except Exception as e:
-            print(f"  AI 总结失败: {e}")
+    def _batch_lines_by_tokens(self, lines, max_content_tokens):
+        """将文本行列表按 token 数分批，确保每批不超过 max_content_tokens"""
+        batches = []
+        current_batch = []
+        current_tokens = 0
+        for line in lines:
+            line_tokens = self._estimate_tokens(line)
+            if current_tokens + line_tokens > max_content_tokens and current_batch:
+                batches.append(current_batch)
+                current_batch = []
+                current_tokens = 0
+            current_batch.append(line)
+            current_tokens += line_tokens
+        if current_batch:
+            batches.append(current_batch)
+        return batches
+
+    @staticmethod
+    def _parse_ai_tweet_ids(response_text):
+        """从 Claude 响应中提取 AI 推文 ID 集合"""
+        json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
+        if not json_match:
+            json_match = re.search(r'\{[^}]*"ai_tweet_ids"[^}]*\}', response_text, re.DOTALL)
+            if json_match:
+                id_data = json.loads(json_match.group(0))
+            else:
+                return None
+        else:
+            id_data = json.loads(json_match.group(1))
+        return set(str(i) for i in id_data.get("ai_tweet_ids", []))
+
+    def _build_tweet_lines(self, followings_data, trending_tweets, with_id=False):
+        """构建推文文本行列表，返回 list of str"""
+        lines = []
+        if followings_data:
+            lines.append("## 关注列表推文：")
+            for ud in followings_data:
+                uname = ud["user"]["username"]
+                for t in ud["tweets"]:
+                    tid = t.get("id", "")
+                    likes = t.get("likeCount", 0)
+                    views = t.get("viewCount", 0)
+                    text = t.get("text", "")[:200]
+                    url = t.get("url", "")
+                    quoted = t.get("quoted_tweet")
+                    quoted_info = ""
+                    if quoted:
+                        q_author = quoted.get("author", {}).get("userName", "?")
+                        q_text = quoted.get("text", "")[:150]
+                        quoted_info = f"\n  [引用 @{q_author}]: {q_text}"
+                    id_prefix = f"[ID:{tid}] " if with_id else ""
+                    lines.append(f"- {id_prefix}@{uname} ({views:,} views, {likes} likes): {text}{quoted_info}\n  URL: {url}")
+        if trending_tweets:
+            lines.append("\n## 全网热门 AI 推文：")
+            for t in trending_tweets:
+                tid = t.get("id", "")
+                author = t.get("author", {}).get("userName", "?")
+                likes = t.get("likeCount", 0)
+                views = t.get("viewCount", 0)
+                text = t.get("text", "")[:200]
+                url = t.get("url", "")
+                id_prefix = f"[ID:{tid}] " if with_id else ""
+                lines.append(f"- {id_prefix}@{author} ({views:,} views, {likes:,} likes): {text}\n  URL: {url}")
+        return lines
+
+    def _filter_and_summarize(
+        self, followings_data, trending_tweets, all_content, window_desc,
+        category_block, rules_block, model, max_tokens, max_input_tokens,
+        api_url, headers, base_url
+    ):
+        """ai_filter 模式：分批筛选 AI 推文 → 分批生成总结"""
+        prompt_overhead = 2000  # 筛选 prompt 模板开销
+        max_content_tokens = max_input_tokens - prompt_overhead
+
+        # ── Pass 1: 分批筛选 ──
+        tweet_lines = self._build_tweet_lines(followings_data, trending_tweets, with_id=True)
+        batches = self._batch_lines_by_tokens(tweet_lines, max_content_tokens)
+        total_batches = len(batches)
+
+        ai_tweet_ids = set()
+        total_input = 0
+        total_output = 0
+
+        filter_label = f"[Pass 1/2] 筛选 AI 推文" if total_batches == 1 else f"[Pass 1/2] 分批筛选 AI 推文（{total_batches} 批）"
+        print(f"  {filter_label} ({model}) via {base_url}...")
+
+        for bi, batch in enumerate(batches, 1):
+            if total_batches > 1:
+                print(f"    批次 {bi}/{total_batches}...", end=" ", flush=True)
+            ids, inp, out = self._filter_batch_robust(
+                batch, window_desc, model, max_tokens, api_url, headers
+            )
+            total_input += inp
+            total_output += out
+            ai_tweet_ids.update(ids)
+            if total_batches > 1:
+                print(f"{len(ids)} 条")
+
+        print(f"  筛选完成（{total_input} + {total_output} tokens）→ {len(ai_tweet_ids)} 条 AI 相关")
+
+        if not ai_tweet_ids:
+            print("  警告: 未识别出 AI 推文，保留所有推文")
             return None, None
 
-    def _two_pass_filter_and_summarize(
-        self, followings_data, trending_tweets, all_content, window_desc,
-        category_block, rules_block, model, max_tokens, api_url, headers
-    ):
-        """大窗口模式：先筛选 AI 相关推文 ID，再用筛选后的数据生成总结"""
-        base_url = api_url.rsplit("/v1/", 1)[0]
+        # ── Pass 2: 用筛选后的推文生成总结 ──
+        filtered_lines = self._build_filtered_lines(followings_data, trending_tweets, ai_tweet_ids)
+        return self._batched_summarize_from_lines(
+            filtered_lines, window_desc, category_block, rules_block,
+            model, max_tokens, max_input_tokens, api_url, headers, base_url,
+            ai_tweet_ids
+        )
 
-        # ── Pass 1: 筛选 ──
+    def _filter_batch_robust(self, lines, window_desc, model, max_tokens,
+                             api_url, headers, depth=0):
+        """筛选单个批次，失败后自动拆分为子批次重试。
+        返回 (ai_tweet_ids: set, input_tokens: int, output_tokens: int)"""
+        batch_content = "\n".join(lines)
         filter_prompt = f"""你是一个 AI 行业信息筛选员。以下是从 Twitter 抓取的推文列表{window_desc}。
 
 任务：从中找出所有与 AI 领域相关的推文（包括 AI 产品、模型、开发工具、行业动态、研究等）。
@@ -771,53 +812,36 @@ class TwitterWatchdog:
 ```
 
 ---
-{all_content}"""
-
-        print(f"  [Pass 1/2] 筛选 AI 推文 ({model}) via {base_url}...")
+{batch_content}"""
         try:
-            resp = requests.post(
-                api_url, headers=headers,
-                json={
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "messages": [{"role": "user", "content": filter_prompt}],
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            response_text = result["content"][0]["text"]
-            usage = result.get("usage", {})
-            print(f"  筛选完成（{usage.get('input_tokens', 0)} + {usage.get('output_tokens', 0)} tokens）")
-
-            json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
-            if not json_match:
-                # 尝试直接解析整个输出
-                json_match = re.search(r'\{.*"ai_tweet_ids".*\}', response_text, re.DOTALL)
-                if json_match:
-                    id_data = json.loads(json_match.group(0))
-                else:
-                    print("  警告: 筛选未返回结果，保留所有推文")
-                    return None, None
-            else:
-                id_data = json.loads(json_match.group(1))
-
-            ai_tweet_ids = set(str(i) for i in id_data.get("ai_tweet_ids", []))
-            print(f"  Claude 识别出 {len(ai_tweet_ids)} 条 AI 相关推文")
-
+            resp_text, usage = self._call_claude_api(
+                filter_prompt, model, max_tokens, api_url, headers)
+            ids = self._parse_ai_tweet_ids(resp_text) or set()
+            return ids, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
         except Exception as e:
-            print(f"  筛选失败: {e}，保留所有推文")
-            return None, None
+            # 行数太少无法继续拆分
+            if len(lines) <= 10:
+                indent = "  " * (depth + 2)
+                print(f"\n    {indent}✗ 子批次仍失败且无法继续拆分（{len(lines)} 行）: {type(e).__name__}")
+                return set(), 0, 0
+            mid = len(lines) // 2
+            indent = "  " * (depth + 2)
+            print(f"\n    {indent}↳ 拆分为 2 个子批次重试（各 ~{mid} 行）...", end=" ", flush=True)
+            ids1, in1, out1 = self._filter_batch_robust(
+                lines[:mid], window_desc, model, max_tokens, api_url, headers, depth + 1)
+            ids2, in2, out2 = self._filter_batch_robust(
+                lines[mid:], window_desc, model, max_tokens, api_url, headers, depth + 1)
+            return ids1 | ids2, in1 + in2, out1 + out2
 
-        # ── Pass 2: 用筛选后的推文生成总结 ──
-        filtered_parts = []
+    def _build_filtered_lines(self, followings_data, trending_tweets, ai_tweet_ids):
+        """根据 AI 推文 ID 构建筛选后的内容行"""
+        lines = []
         if followings_data:
-            filtered_parts.append("## 关注列表推文：")
+            lines.append("## 关注列表推文：")
             for ud in followings_data:
                 uname = ud["user"]["username"]
                 for t in ud["tweets"]:
-                    tid = str(t.get("id", ""))
-                    if tid not in ai_tweet_ids:
+                    if str(t.get("id", "")) not in ai_tweet_ids:
                         continue
                     likes = t.get("likeCount", 0)
                     views = t.get("viewCount", 0)
@@ -829,24 +853,116 @@ class TwitterWatchdog:
                         q_author = quoted.get("author", {}).get("userName", "?")
                         q_text = quoted.get("text", "")[:150]
                         quoted_info = f"\n  [引用 @{q_author}]: {q_text}"
-                    filtered_parts.append(f"- @{uname} ({views:,} views, {likes} likes): {text}{quoted_info}\n  URL: {url}")
-
+                    lines.append(f"- @{uname} ({views:,} views, {likes} likes): {text}{quoted_info}\n  URL: {url}")
         if trending_tweets:
-            filtered_parts.append("\n## 全网热门 AI 推文：")
+            lines.append("\n## 全网热门 AI 推文：")
             for t in trending_tweets:
-                tid = str(t.get("id", ""))
-                if tid not in ai_tweet_ids:
+                if str(t.get("id", "")) not in ai_tweet_ids:
                     continue
                 author = t.get("author", {}).get("userName", "?")
                 likes = t.get("likeCount", 0)
                 views = t.get("viewCount", 0)
                 text = t.get("text", "")[:200]
                 url = t.get("url", "")
-                filtered_parts.append(f"- @{author} ({views:,} views, {likes:,} likes): {text}\n  URL: {url}")
+                lines.append(f"- @{author} ({views:,} views, {likes:,} likes): {text}\n  URL: {url}")
+        return lines
 
-        filtered_content = "\n".join(filtered_parts)
+    def _batched_summarize(
+        self, all_content, window_desc, category_block, rules_block,
+        model, max_tokens, max_input_tokens, api_url, headers, base_url
+    ):
+        """非 ai_filter 模式：按 token 分批生成总结"""
+        content_lines = all_content.split("\n")
+        return self._batched_summarize_from_lines(
+            content_lines, window_desc, category_block, rules_block,
+            model, max_tokens, max_input_tokens, api_url, headers, base_url,
+            ai_tweet_ids=None
+        )
 
-        summary_prompt = f"""你是一个 AI 行业信息整理员。以下是从 Twitter 抓取的 AI 相关推文{window_desc}。
+    def _batched_summarize_from_lines(
+        self, content_lines, window_desc, category_block, rules_block,
+        model, max_tokens, max_input_tokens, api_url, headers, base_url,
+        ai_tweet_ids
+    ):
+        """通用分批总结：支持 ai_filter 和非 ai_filter 模式"""
+        prompt_overhead = 3000  # 总结 prompt 模板开销
+        max_content_tokens = max_input_tokens - prompt_overhead
+
+        batches = self._batch_lines_by_tokens(content_lines, max_content_tokens)
+        total_batches = len(batches)
+
+        summary_label = "[Pass 2/2] 生成总结" if ai_tweet_ids is not None else "生成总结"
+        if total_batches > 1:
+            summary_label += f"（{total_batches} 批）"
+        print(f"  {summary_label} ({model}) via {base_url}...")
+
+        partial_summaries = []
+        total_input = 0
+        total_output = 0
+
+        for bi, batch in enumerate(batches, 1):
+            batch_label = f"（第 {bi}/{total_batches} 批）" if total_batches > 1 else ""
+            if total_batches > 1:
+                print(f"    批次 {bi}/{total_batches}...", end=" ", flush=True)
+
+            summaries, inp, out = self._summarize_batch_robust(
+                batch, window_desc, batch_label,
+                category_block, rules_block, model, max_tokens, api_url, headers
+            )
+            total_input += inp
+            total_output += out
+            partial_summaries.extend(summaries)
+            if total_batches > 1 and summaries:
+                print(f"完成（{inp} + {out} tokens）")
+
+        if not partial_summaries:
+            print("  总结失败: 所有批次均失败")
+            return None, ai_tweet_ids
+
+        # 单份总结 → 直接进入校验
+        if len(partial_summaries) == 1:
+            print(f"  总结完成（{total_input} + {total_output} tokens）")
+            final = self._validate_summary(
+                partial_summaries[0], model, max_tokens, api_url, headers)
+            return final, ai_tweet_ids
+
+        # 多份总结 → 合并 + 校验（合并 prompt 本身包含去重，因此合并即校验）
+        print(f"  批次总结完成（{total_input} + {total_output} tokens），合并校验中...")
+        merge_content = "\n\n---\n\n".join(
+            f"### 批次 {i+1} 总结：\n{s}" for i, s in enumerate(partial_summaries)
+        )
+        merge_prompt = f"""你是一个 AI 行业信息质量审核员。以下是分批处理产生的多份 AI 推文总结，请合并为一份高置信度的最终日报。
+
+任务：
+1. 合并报道同一事件的不同条目（保留最完整的描述，综合多个信息源）
+2. 去除完全重复的条目
+3. 检查高度相似的条目（同一产品/事件的不同角度），合并为一条综合描述
+4. 确保每条都保留了有效的推文 URL（格式：[标题](URL)）
+5. 确保分类准确，每个分类内按重要性排列
+6. 保持格式一致：- [标题](URL)。描述。
+
+规则：
+- 保持原有的分类结构（本期要点、AI 产品与工具、AI 模型与技术等）
+- 如果某个分类下没有内容，省略该分类
+- 不要加前言或结尾总结段落
+- 直接输出最终版本
+
+{merge_content}"""
+
+        merged_text, merge_usage = self._call_claude_api(
+            merge_prompt, model, max_tokens, api_url, headers)
+        total_input += merge_usage.get("input_tokens", 0)
+        total_output += merge_usage.get("output_tokens", 0)
+        print(f"  合并校验完成（总计 {total_input} + {total_output} tokens）")
+        return merged_text, ai_tweet_ids
+
+    def _summarize_batch_robust(self, lines, window_desc, batch_label,
+                                category_block, rules_block,
+                                model, max_tokens, api_url, headers, depth=0):
+        """总结单个批次，失败后自动拆分为子批次重试。
+        返回 (summaries: list[str], input_tokens: int, output_tokens: int)"""
+        batch_content = "\n".join(lines)
+        prompt = f"""你是一个 AI 行业信息整理员。以下是从 Twitter 抓取的 AI 相关推文{window_desc}{batch_label}。
 
 任务：生成结构化的分类日报。
 
@@ -857,29 +973,59 @@ class TwitterWatchdog:
 {rules_block}
 
 ---
-{filtered_content}"""
+{batch_content}"""
 
-        print(f"  [Pass 2/2] 生成总结 ({model}) via {base_url}...")
         try:
-            resp = requests.post(
-                api_url, headers=headers,
-                json={
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "messages": [{"role": "user", "content": summary_prompt}],
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            summary_text = result["content"][0]["text"]
-            usage = result.get("usage", {})
-            print(f"  总结完成（{usage.get('input_tokens', 0)} + {usage.get('output_tokens', 0)} tokens）")
-
-            return summary_text, ai_tweet_ids
+            resp_text, usage = self._call_claude_api(
+                prompt, model, max_tokens, api_url, headers)
+            return [resp_text], usage.get("input_tokens", 0), usage.get("output_tokens", 0)
         except Exception as e:
-            print(f"  总结失败: {e}")
-            return None, ai_tweet_ids
+            if len(lines) <= 10:
+                indent = "  " * (depth + 2)
+                print(f"\n    {indent}✗ 子批次仍失败且无法继续拆分（{len(lines)} 行）: {type(e).__name__}")
+                return [], 0, 0
+            mid = len(lines) // 2
+            indent = "  " * (depth + 2)
+            print(f"\n    {indent}↳ 拆分为 2 个子批次重试（各 ~{mid} 行）...", end=" ", flush=True)
+            s1, in1, out1 = self._summarize_batch_robust(
+                lines[:mid], window_desc, batch_label,
+                category_block, rules_block, model, max_tokens, api_url, headers, depth + 1)
+            s2, in2, out2 = self._summarize_batch_robust(
+                lines[mid:], window_desc, batch_label,
+                category_block, rules_block, model, max_tokens, api_url, headers, depth + 1)
+            return s1 + s2, in1 + in2, out1 + out2
+
+    def _validate_summary(self, summary_text, model, max_tokens, api_url, headers):
+        """最终校验：去重、合并相似条目、格式一致性检查。
+        返回校验后的总结文本。"""
+        print("  [校验] 最终去重与合并检查...", end=" ", flush=True)
+        validate_prompt = f"""你是一个 AI 信息质量审核员。以下是一份 AI 推文日报，请进行最终校验和优化。
+
+校验任务：
+1. 重复检测：找出描述同一事件/新闻的重复条目，只保留信息最完整的一条
+2. 相似合并：将高度相关的条目（同一产品/事件的不同角度）合并为一条综合描述
+3. URL 检查：确保每条都包含有效的推文链接，格式为 [标题](URL)
+4. 分类校验：确认条目放在了正确的分类下，如有错误则调整
+5. 格式统一：每条格式为 - [标题](URL)。描述。
+
+规则：
+- 如果内容已经很好，无需重复/合并问题，直接原样输出
+- 如果有需要修正的，输出修正后的完整版本
+- 保持原有分类结构
+- 不要加任何说明、注释、前言或结尾
+- 直接输出最终版本
+
+---
+{summary_text}"""
+
+        try:
+            validated, usage = self._call_claude_api(
+                validate_prompt, model, max_tokens, api_url, headers)
+            print(f"完成（{usage.get('input_tokens', 0)} + {usage.get('output_tokens', 0)} tokens）")
+            return validated
+        except Exception as e:
+            print(f"跳过（{type(e).__name__}），使用原始总结")
+            return summary_text
 
     # ── 通知 ──────────────────────────────────────────────
 
@@ -898,37 +1044,28 @@ class TwitterWatchdog:
         except Exception as e:
             print(f"  通知失败: {e}")
 
-    # ── 主流程 ────────────────────────────────────────────
+    # ── Layer 1: 抓取 ──────────────────────────────────────
 
-    def scrape_followings_tweets(self):
-        """主流程：抓取 → 过滤 → 时间窗口 → AI 总结/筛选 → 报告"""
+    def run_scrape(self):
+        """Layer 1: 纯数据抓取，保存原始推文（不做关键词/AI 过滤）"""
         username = self.twitter_config["username"]
-        ai_filter = self.config.get("ai_summary", {}).get("ai_filter", False)
         now = self.now()
-        print(f"=== Twitter Watchdog ===")
+        print(f"=== Twitter Watchdog — 抓取 ===")
         print(f"监控账户: @{username}")
         print(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC+8)")
         if self.hours_ago:
-            cutoff = now - timedelta(hours=self.hours_ago)
-            if cutoff.date() == now.date():
-                win = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
-            else:
-                win = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
-            print(f"时间窗口: {win}（最近 {self.hours_ago} 小时）")
+            print(f"分页深度: 最近 {self.hours_ago} 小时")
         print()
 
         # 步骤1: 获取关注列表
-        print("[1/5] 获取关注列表...")
+        print("[1/3] 获取关注列表...")
         followings = self.get_following()
         print(f"  共 {len(followings)} 个关注账户")
 
-        # 步骤2: 抓取推文
-        print(f"\n[2/5] 抓取推文（twitterapi.io）...")
-        output_path = Path(self.output_config["directory"])
-        output_path.mkdir(parents=True, exist_ok=True)
-
+        # 步骤2: 抓取推文（全量，不做关键词/AI 过滤）
+        print(f"\n[2/3] 抓取推文（twitterapi.io）...")
         all_data = []
-        new_tweets_count = 0
+        total_tweets = 0
         api_calls = 0
 
         for i, user in enumerate(followings, 1):
@@ -940,26 +1077,19 @@ class TwitterWatchdog:
                 tweets, calls = self.get_tweets(uname)
                 api_calls += calls
 
-                filtered_tweets = []
+                new_tweets = []
                 for tweet in tweets:
                     tweet_id = tweet.get("id", "")
                     if self.advanced_config.get("deduplicate", True) and self.is_tweet_seen(tweet_id):
                         continue
-                    if not self.is_tweet_in_window(tweet):
-                        continue
+                    new_tweets.append(tweet)
+                    self.mark_tweet_seen(tweet_id)
+                    total_tweets += 1
 
-                    passed, reason = self.filter_tweet(tweet)
-                    if passed:
-                        filtered_tweets.append(tweet)
-                        self.mark_tweet_seen(tweet_id)
-                        self.collect_tweet_image(tweet)
-                        new_tweets_count += 1
+                print(f"{len(new_tweets)} 条")
 
-                label = "条" if ai_filter else "条 AI 相关"
-                print(f"{len(filtered_tweets)} {label}")
-
-                if filtered_tweets:
-                    all_data.append({"user": user, "tweets": filtered_tweets})
+                if new_tweets:
+                    all_data.append({"user": user, "tweets": new_tweets})
 
             except Exception as e:
                 print(f"错误: {e}")
@@ -969,112 +1099,498 @@ class TwitterWatchdog:
         trending_tweets = []
         if trending_config.get("enabled", True):
             max_trending = trending_config.get("max_tweets", 20)
-            print(f"\n[3/5] 搜索全网热门 AI 推文...")
+            print(f"\n[3/3] 搜索全网热门 AI 推文...")
             try:
                 trending_tweets = self.search_trending_ai(max_tweets=max_trending)
                 api_calls += 1
-                # 去重 + 时间窗口
+                # 去重（不做时间窗口过滤，保留全量）
                 seen_ids = {t.get("id") for ud in all_data for t in ud["tweets"]}
-                trending_tweets = [
-                    t for t in trending_tweets
-                    if t.get("id") not in seen_ids and self.is_tweet_in_window(t)
-                ]
-                for t in trending_tweets:
-                    self.collect_tweet_image(t)
+                trending_tweets = [t for t in trending_tweets if t.get("id") not in seen_ids]
                 print(f"  找到 {len(trending_tweets)} 条热门 AI 推文")
             except Exception as e:
                 print(f"  搜索失败: {e}")
-
-        # 步骤4: AI 智能总结（+ AI 相关性判断）
-        ai_summary = None
-        total_collected = new_tweets_count  # 记录筛选前总数
-        if all_data or trending_tweets:
-            step_desc = "AI 智能总结 + 相关性判断" if ai_filter else "AI 智能总结"
-            print(f"\n[4/5] {step_desc}...")
-            ai_summary, ai_tweet_ids = self.generate_ai_summary(all_data, trending_tweets)
-
-            # AI 筛选模式：根据 Claude 判断过滤推文
-            if ai_tweet_ids is not None:
-                filtered_data = []
-                new_tweets_count = 0
-                for ud in all_data:
-                    ft = [t for t in ud["tweets"] if str(t.get("id", "")) in ai_tweet_ids]
-                    if ft:
-                        filtered_data.append({"user": ud["user"], "tweets": ft})
-                        new_tweets_count += len(ft)
-                all_data = filtered_data
-                trending_tweets = [t for t in trending_tweets if str(t.get("id", "")) in ai_tweet_ids]
-                print(f"  AI 筛选: {new_tweets_count} 条关注 + {len(trending_tweets)} 条热门（总抓取 {total_collected} 条）")
-
-        # 步骤5: 输出报告
-        print(f"\n[5/5] 生成报告...")
-        print(f"  twitterapi.io 调用: {api_calls} 次")
-        print(f"  关注列表 AI 推文: {new_tweets_count} 条")
-        if trending_tweets:
-            print(f"  全网热门 AI 推文: {len(trending_tweets)} 条")
-
-        total = new_tweets_count + len(trending_tweets)
-        if total > 0:
-            threshold = self.notifications_config.get("threshold", 1)
-            if self.notifications_config.get("on_new_tweets", True) and total >= threshold:
-                self.send_notification(
-                    "Twitter Watchdog",
-                    f"发现 {new_tweets_count} 条关注 + {len(trending_tweets)} 条热门 AI 推文！",
-                )
+        else:
+            print(f"\n[3/3] 热门搜索已禁用")
 
         self.save_state()
 
-        if all_data or trending_tweets:
-            self.save_results(all_data, trending_tweets, username, {
-                "new_tweets_count": new_tweets_count,
-                "trending_count": len(trending_tweets),
-            }, ai_summary)
-        else:
-            print("  没有新的 AI 相关推文")
-
-        return all_data
-
-    # ── 报告输出 ──────────────────────────────────────────
-
-    def save_results(self, data, trending_tweets, source_username, stats, ai_summary=None):
+        # 保存原始数据
         output_path = Path(self.output_config["directory"])
-        timestamp = self.now().strftime("%Y%m%d_%H%M%S")
+        raw_dir = output_path / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
 
-        # 下载报告中推文的图片并插入到 AI 总结中
-        ai_summary_with_images = ai_summary
-        if ai_summary:
-            downloaded = self.download_report_images(ai_summary, output_path)
-            if downloaded:
-                ai_summary_with_images = self.insert_images_into_summary(ai_summary, downloaded)
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        raw_file = raw_dir / f"{timestamp}.json"
 
-        if "json" in self.output_config.get("formats", ["json"]):
-            json_file = output_path / f"ai_tweets_{timestamp}.json"
-            json_data = {
-                "followings": data,
-                "trending": trending_tweets,
-                "ai_summary": ai_summary,  # JSON 保存不含图片的原始总结
-            }
-            with open(json_file, "w", encoding="utf-8") as f:
-                json.dump(json_data, f, ensure_ascii=False, indent=2, default=str)
-            print(f"  JSON: {json_file}")
+        raw_data = {
+            "metadata": {
+                "scraped_at": now.isoformat(),
+                "username": username,
+                "hours_ago": self.hours_ago,
+                "followings_count": len(followings),
+                "total_tweets": total_tweets + len(trending_tweets),
+                "api_calls": api_calls,
+            },
+            "followings": all_data,
+            "trending": trending_tweets,
+        }
 
-        # Markdown 报告（始终生成）
-        md_file = output_path / f"ai_tweets_{timestamp}.md"
-        self.save_as_markdown(data, trending_tweets, md_file, source_username, stats, ai_summary_with_images)
-        print(f"  Markdown: {md_file}")
+        with open(raw_file, "w", encoding="utf-8") as f:
+            json.dump(raw_data, f, ensure_ascii=False, indent=2, default=str)
 
-        # HTML 报告（始终生成，用于 web 部署和分享）
-        html_file = output_path / f"ai_tweets_{timestamp}.html"
+        print(f"\n  原始数据: {raw_file}")
+        print(f"  关注推文: {total_tweets} 条 | 热门推文: {len(trending_tweets)} 条 | API 调用: {api_calls} 次")
+
+        return str(raw_file)
+
+    # ── Layer 2: 分析 ──────────────────────────────────────
+
+    def _find_raw_files(self, source=None, time_from=None, time_to=None):
+        """定位 raw JSON 文件"""
+        output_path = Path(self.output_config["directory"])
+        raw_dir = output_path / "raw"
+
+        if source:
+            source_path = Path(source)
+            if not source_path.is_absolute():
+                source_path = output_path / source
+            if not source_path.exists():
+                print(f"  错误: 文件不存在 {source_path}")
+                return []
+            return [source_path]
+
+        if not raw_dir.exists():
+            print(f"  错误: raw 目录不存在 {raw_dir}")
+            return []
+
+        raw_files = sorted(raw_dir.glob("*.json"))
+        if not raw_files:
+            print(f"  错误: raw 目录中没有 JSON 文件")
+            return []
+
+        if time_from or time_to:
+            matched = []
+            for f in raw_files:
+                try:
+                    file_dt = datetime.strptime(f.stem, "%Y%m%d_%H%M%S").replace(tzinfo=TZ_CN)
+                    if time_from and file_dt < time_from:
+                        continue
+                    if time_to and file_dt > time_to:
+                        continue
+                    matched.append(f)
+                except ValueError:
+                    continue
+            return matched
+
+        # 默认返回最新的 raw 文件
+        return [raw_files[-1]]
+
+    def run_analyze(self, source=None, time_from=None, time_to=None):
+        """Layer 2: AI 分析原始数据"""
+        now = self.now()
+        print(f"=== Twitter Watchdog — 分析 ===")
+        print(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC+8)")
+        print()
+
+        # 步骤1: 定位 raw 文件
+        print("[1/3] 定位原始数据...")
+        raw_files = self._find_raw_files(source=source, time_from=time_from, time_to=time_to)
+        if not raw_files:
+            print("  未找到原始数据文件")
+            return None
+
+        print(f"  找到 {len(raw_files)} 个文件: {', '.join(f.name for f in raw_files)}")
+
+        # 合并多个 raw 文件的数据
+        all_followings = []
+        all_trending = []
+        source_filenames = []
+        for rf in raw_files:
+            with open(rf, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+            all_followings.extend(raw_data.get("followings", []))
+            all_trending.extend(raw_data.get("trending", []))
+            source_filenames.append(rf.name)
+
+        # 步骤2: 时间窗口过滤 + 关键词预过滤
+        print(f"\n[2/3] 过滤推文...")
+        ai_filter = self.config.get("ai_summary", {}).get("ai_filter", False)
+
+        # 时间窗口
+        window_from = time_from
+        window_to = time_to
+        if self.hours_ago and not time_from and not time_to:
+            window_to = now
+            window_from = now - timedelta(hours=self.hours_ago)
+
+        filtered_followings = []
+        total_before = 0
+        total_after_window = 0
+        total_after_filter = 0
+
+        for ud in all_followings:
+            total_before += len(ud["tweets"])
+
+            # 时间窗口过滤
+            window_tweets = []
+            for t in ud["tweets"]:
+                if window_from or window_to:
+                    created = self.parse_tweet_time(t.get("createdAt", ""))
+                    if created:
+                        if window_from and created < window_from:
+                            continue
+                        if window_to and created > window_to:
+                            continue
+                window_tweets.append(t)
+
+            total_after_window += len(window_tweets)
+
+            # 关键词预过滤（当 ai_filter=true 时跳过，交给 Claude）
+            if not ai_filter:
+                keyword_tweets = []
+                for t in window_tweets:
+                    passed, reason = self.filter_tweet(t)
+                    if passed:
+                        keyword_tweets.append(t)
+                total_after_filter += len(keyword_tweets)
+                if keyword_tweets:
+                    filtered_followings.append({"user": ud["user"], "tweets": keyword_tweets})
+            else:
+                total_after_filter += len(window_tweets)
+                if window_tweets:
+                    filtered_followings.append({"user": ud["user"], "tweets": window_tweets})
+
+        # trending 也做时间窗口 + 关键词过滤
+        filtered_trending = []
+        for t in all_trending:
+            if window_from or window_to:
+                created = self.parse_tweet_time(t.get("createdAt", ""))
+                if created:
+                    if window_from and created < window_from:
+                        continue
+                    if window_to and created > window_to:
+                        continue
+            if not ai_filter:
+                passed, reason = self.filter_tweet(t)
+                if not passed:
+                    continue
+            filtered_trending.append(t)
+
+        time_desc = ""
+        if window_from and window_to:
+            time_desc = f" ({window_from.strftime('%m/%d %H:%M')} ~ {window_to.strftime('%m/%d %H:%M')})"
+        print(f"  原始: {total_before} 条 → 时间窗口: {total_after_window} 条 → 过滤后: {total_after_filter} 条{time_desc}")
+        print(f"  热门: {len(all_trending)} 条 → {len(filtered_trending)} 条")
+
+        if not filtered_followings and not filtered_trending:
+            print("  过滤后无推文，跳过分析")
+            return None
+
+        # 收集图片信息
+        for ud in filtered_followings:
+            for t in ud["tweets"]:
+                self.collect_tweet_image(t)
+        for t in filtered_trending:
+            self.collect_tweet_image(t)
+
+        # 步骤3: AI 分析
+        print(f"\n[3/3] AI 分析...")
+        ai_summary, ai_tweet_ids = self.generate_ai_summary(filtered_followings, filtered_trending)
+
+        # AI 筛选后过滤
+        final_followings = filtered_followings
+        final_trending = filtered_trending
+        if ai_tweet_ids is not None:
+            final_followings = []
+            filtered_count = 0
+            for ud in filtered_followings:
+                ft = [t for t in ud["tweets"] if str(t.get("id", "")) in ai_tweet_ids]
+                if ft:
+                    final_followings.append({"user": ud["user"], "tweets": ft})
+                    filtered_count += len(ft)
+            final_trending = [t for t in filtered_trending if str(t.get("id", "")) in ai_tweet_ids]
+            print(f"  AI 筛选: {filtered_count} 条关注 + {len(final_trending)} 条热门")
+
+        # 保存分析结果
+        output_path = Path(self.output_config["directory"])
+        analysis_dir = output_path / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        analysis_file = analysis_dir / f"{timestamp}.json"
+
+        total_filtered = sum(len(ud["tweets"]) for ud in final_followings) + len(final_trending)
+        analysis_data = {
+            "metadata": {
+                "analyzed_at": now.isoformat(),
+                "source_files": source_filenames,
+                "time_window": {
+                    "from": window_from.isoformat() if window_from else None,
+                    "to": window_to.isoformat() if window_to else None,
+                },
+                "total_tweets": total_before + len(all_trending),
+                "filtered_count": total_filtered,
+                "model": self.config.get("ai_summary", {}).get("model", "claude-sonnet-4-5-20250929"),
+            },
+            "ai_tweet_ids": list(ai_tweet_ids) if ai_tweet_ids else [],
+            "summary": ai_summary,
+            "filtered_followings": final_followings,
+            "filtered_trending": final_trending,
+        }
+
+        with open(analysis_file, "w", encoding="utf-8") as f:
+            json.dump(analysis_data, f, ensure_ascii=False, indent=2, default=str)
+
+        print(f"\n  分析结果: {analysis_file}")
+        print(f"  筛选: {total_before + len(all_trending)} 条 → {total_filtered} 条 AI 相关")
+
+        return str(analysis_file)
+
+    # ── Layer 3: 报告 ──────────────────────────────────────
+
+    def _find_analysis_files(self, source=None, daily=None, weekly=None, monthly=None):
+        """定位 analysis JSON 文件"""
+        output_path = Path(self.output_config["directory"])
+        analysis_dir = output_path / "analysis"
+
+        if source:
+            source_path = Path(source)
+            if not source_path.is_absolute():
+                source_path = output_path / source
+            if not source_path.exists():
+                print(f"  错误: 文件不存在 {source_path}")
+                return []
+            return [source_path]
+
+        if not analysis_dir.exists():
+            print(f"  错误: analysis 目录不存在 {analysis_dir}")
+            return []
+
+        analysis_files = sorted(analysis_dir.glob("*.json"))
+        if not analysis_files:
+            print(f"  错误: analysis 目录中没有 JSON 文件")
+            return []
+
+        if daily:
+            date_prefix = daily.replace("-", "")
+            return [f for f in analysis_files if f.stem.startswith(date_prefix)]
+
+        if weekly:
+            start_date = datetime.strptime(weekly, "%Y-%m-%d")
+            end_date = start_date + timedelta(days=7)
+            matched = []
+            for f in analysis_files:
+                try:
+                    file_dt = datetime.strptime(f.stem[:8], "%Y%m%d")
+                    if start_date <= file_dt < end_date:
+                        matched.append(f)
+                except ValueError:
+                    continue
+            return matched
+
+        if monthly:
+            month_prefix = monthly.replace("-", "")
+            return [f for f in analysis_files if f.stem.startswith(month_prefix)]
+
+        # 默认返回最新的 analysis 文件
+        return [analysis_files[-1]]
+
+    def run_report(self, source=None, daily=None, weekly=None, monthly=None):
+        """Layer 3: 从分析结果生成报告"""
+        now = self.now()
+        print(f"=== Twitter Watchdog — 报告 ===")
+        print(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC+8)")
+        print()
+
+        # 步骤1: 定位 analysis 文件
+        is_periodic = daily or weekly or monthly
+        report_type = "日报" if daily else "周报" if weekly else "月报" if monthly else "报告"
+        print(f"[1/3] 定位分析数据（{report_type}）...")
+
+        analysis_files = self._find_analysis_files(
+            source=source, daily=daily, weekly=weekly, monthly=monthly
+        )
+        if not analysis_files:
+            print("  未找到分析数据文件")
+            return
+
+        print(f"  找到 {len(analysis_files)} 个文件")
+
+        # 读取分析数据
+        all_summaries = []
+        all_followings = []
+        all_trending = []
+        for af in analysis_files:
+            with open(af, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            summary = data.get("summary", "")
+            if summary:
+                all_summaries.append(summary)
+            all_followings.extend(data.get("filtered_followings", []))
+            all_trending.extend(data.get("filtered_trending", []))
+
+        if not all_summaries:
+            print("  分析数据中无总结内容")
+            return
+
+        # 步骤2: 聚合（多文件时需要去重+合并）
+        print(f"\n[2/3] 处理总结内容...")
+        if len(all_summaries) == 1 and not is_periodic:
+            final_summary = all_summaries[0]
+            print(f"  单份分析，直接使用")
+        else:
+            # 聚合多份分析
+            all_items = []
+            for s in all_summaries:
+                items = self._parse_summary_items(s)
+                all_items.extend(items)
+            print(f"  提取 {len(all_items)} 条（去重前）")
+
+            unique_items = self._deduplicate_items(all_items)
+            print(f"  去重后: {len(unique_items)} 条")
+
+            if is_periodic and unique_items:
+                period = "monthly" if monthly else "weekly"
+                if monthly:
+                    year, month_str = monthly.split("-")
+                    period_label = f"{year} 年 {int(month_str)} 月"
+                elif weekly:
+                    start_d = datetime.strptime(weekly, "%Y-%m-%d")
+                    end_d = start_d + timedelta(days=7)
+                    period_label = f"{start_d.strftime('%m/%d')} ~ {end_d.strftime('%m/%d')}"
+                else:
+                    period_label = daily
+                consolidated = self._claude_consolidate(unique_items, period, period_label)
+                final_summary = consolidated or "\n\n".join(item["full_text"] for item in unique_items)
+            else:
+                # 多份非周期报告：直接合并
+                final_summary = "\n\n".join(all_summaries)
+
+        # 收集图片信息
+        for ud in all_followings:
+            for t in ud["tweets"]:
+                self.collect_tweet_image(t)
+        for t in all_trending:
+            self.collect_tweet_image(t)
+
+        # 步骤3: 生成报告文件
+        print(f"\n[3/3] 生成报告文件...")
+        output_path = Path(self.output_config["directory"])
+        reports_dir = output_path / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        # 下载图片
+        ai_summary_with_images = final_summary
+        downloaded = self.download_report_images(final_summary, reports_dir)
+        if downloaded:
+            ai_summary_with_images = self.insert_images_into_summary(final_summary, downloaded)
+
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+
+        # 确定文件名
+        if daily:
+            base_name = f"daily_{daily.replace('-', '')}"
+        elif weekly:
+            base_name = f"weekly_{weekly.replace('-', '')}"
+        elif monthly:
+            base_name = f"monthly_{monthly.replace('-', '')}"
+        else:
+            base_name = timestamp
+
+        # HTML 报告
+        html_file = reports_dir / f"{base_name}.html"
         self.save_as_html(html_file, ai_summary_with_images, timestamp)
-        # 同时生成/覆盖 latest.html 方便直接访问
-        latest_html = output_path / "latest.html"
-        self.save_as_html(latest_html, ai_summary_with_images, timestamp)
         print(f"  HTML: {html_file}")
 
-        if self.output_config.get("create_summary", False):
-            summary_file = output_path / "latest_summary.md"
-            self.create_summary(summary_file, source_username, data, trending_tweets, stats, ai_summary)
-            print(f"  汇总: {summary_file}")
+        # 更新 latest.html
+        latest_html = reports_dir / "latest.html"
+        self.save_as_html(latest_html, ai_summary_with_images, timestamp)
+
+        # Markdown 报告
+        md_file = reports_dir / f"{base_name}.md"
+        self._save_report_markdown(md_file, final_summary, all_followings, all_trending, report_type)
+        print(f"  Markdown: {md_file}")
+
+        # 通知
+        total = sum(len(ud["tweets"]) for ud in all_followings) + len(all_trending)
+        if total > 0:
+            threshold = self.notifications_config.get("threshold", 1)
+            if self.notifications_config.get("on_new_tweets", True) and total >= threshold:
+                following_count = sum(len(ud["tweets"]) for ud in all_followings)
+                self.send_notification(
+                    "Twitter Watchdog",
+                    f"发现 {following_count} 条关注 + {len(all_trending)} 条热门 AI 推文！",
+                )
+
+        return str(html_file)
+
+    def _save_report_markdown(self, output_file, summary, followings_data, trending_tweets, report_type="报告"):
+        """从分析数据生成 Markdown 报告"""
+        now = self.now()
+        ts = now.strftime("%Y-%m-%d %H:%M:%S")
+        following_count = sum(len(ud["tweets"]) for ud in followings_data)
+        total = following_count + len(trending_tweets)
+
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(f"# AI 推文{report_type}\n\n")
+            f.write(f"**生成时间**: {ts} (UTC+8)\n")
+            if self.hours_ago:
+                cutoff = now - timedelta(hours=self.hours_ago)
+                if cutoff.date() == now.date():
+                    win = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
+                else:
+                    win = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
+                f.write(f"**时间窗口**: {win}\n")
+            f.write(f"**AI 相关推文**: {following_count} 条关注 + {len(trending_tweets)} 条热门\n")
+            f.write(f"**总计**: {total} 条\n\n")
+
+            if summary:
+                f.write("---\n\n")
+                f.write(summary)
+                f.write("\n\n")
+
+            if followings_data:
+                f.write("---\n\n")
+                f.write("# 关注列表 AI 推文\n\n")
+                for user_data in followings_data:
+                    user = user_data["user"]
+                    tweets = user_data["tweets"]
+                    uname = user.get("username", "")
+                    name = user.get("name", "")
+                    desc = user.get("description", "")
+                    followers = user.get("public_metrics", {}).get("followers_count", 0)
+                    f.write(f"## @{uname} ({name})\n\n")
+                    if desc:
+                        f.write(f"> {desc}\n\n")
+                    f.write(f"**粉丝**: {followers:,}\n\n")
+                    for tweet in tweets:
+                        self._write_tweet_md(f, tweet)
+                    f.write("---\n\n")
+
+            if trending_tweets:
+                f.write("---\n\n")
+                f.write("# 全网热门 AI 推文\n\n")
+                for tweet in trending_tweets:
+                    self._write_tweet_md(f, tweet)
+                    f.write("---\n\n")
+
+    # ── 流水线（向后兼容）─────────────────────────────────
+
+    def run_pipeline(self):
+        """三步流水线（向后兼容旧的无子命令用法）"""
+        raw_file = self.run_scrape()
+        if not raw_file:
+            print("\n抓取无数据，流水线终止")
+            return
+
+        analysis_file = self.run_analyze(source=raw_file)
+        if not analysis_file:
+            print("\n分析无结果，流水线终止")
+            return
+
+        self.run_report(source=analysis_file)
+
+    # ── 报告输出 ──────────────────────────────────────────
 
     @staticmethod
     def _html_page(title, subtitle, body_html):
@@ -1542,112 +2058,7 @@ class TwitterWatchdog:
             f.write(f"  [原文链接]({url})")
         f.write("\n\n")
 
-    def save_as_markdown(self, data, trending_tweets, output_file, source_username, stats, ai_summary=None):
-        """生成 Markdown 报告"""
-        now = self.now()
-        ts = now.strftime("%Y-%m-%d %H:%M:%S")
-        total = stats['new_tweets_count'] + stats.get('trending_count', 0)
-
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(f"# AI 推文日报\n\n")
-            f.write(f"**监控账户**: @{source_username}\n")
-            f.write(f"**抓取时间**: {ts} (UTC+8)\n")
-            if self.hours_ago:
-                cutoff = now - timedelta(hours=self.hours_ago)
-                if cutoff.date() == now.date():
-                    win = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
-                else:
-                    win = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
-                f.write(f"**时间窗口**: {win}\n")
-            f.write(f"**关注列表 AI 推文**: {stats['new_tweets_count']} 条\n")
-            if trending_tweets:
-                f.write(f"**全网热门 AI 推文**: {stats.get('trending_count', 0)} 条\n")
-            f.write(f"**总计**: {total} 条\n\n")
-
-            if ai_summary:
-                f.write("---\n\n")
-                f.write("# AI 智能总结\n\n")
-                f.write(ai_summary)
-                f.write("\n\n")
-
-            if data:
-                f.write("---\n\n")
-                f.write("# 关注列表 AI 推文\n\n")
-
-                for user_data in data:
-                    user = user_data["user"]
-                    tweets = user_data["tweets"]
-                    uname = user["username"]
-                    name = user["name"]
-                    desc = user.get("description", "")
-                    followers = user.get("public_metrics", {}).get("followers_count", 0)
-
-                    f.write(f"## @{uname} ({name})\n\n")
-                    if desc:
-                        f.write(f"> {desc}\n\n")
-                    f.write(f"**粉丝**: {followers:,}\n\n")
-
-                    for tweet in tweets:
-                        self._write_tweet_md(f, tweet)
-
-                    f.write("---\n\n")
-
-            if trending_tweets:
-                f.write("---\n\n")
-                f.write("# 全网热门 AI 推文\n\n")
-
-                for tweet in trending_tweets:
-                    self._write_tweet_md(f, tweet)
-                    f.write("---\n\n")
-
-    def create_summary(self, output_file, source_username, data, trending_tweets, stats, ai_summary=None):
-        now = self.now()
-        ts = now.strftime("%Y-%m-%d %H:%M:%S")
-        total = stats['new_tweets_count'] + stats.get('trending_count', 0)
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(f"# Twitter Watchdog - AI 推文汇总\n\n")
-            f.write(f"**更新时间**: {ts} (UTC+8)\n")
-            f.write(f"**监控账户**: @{source_username}\n")
-            if self.hours_ago:
-                cutoff = now - timedelta(hours=self.hours_ago)
-                if cutoff.date() == now.date():
-                    win = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
-                else:
-                    win = f"{cutoff.strftime('%m月%d日 %H:%M')} ~ {now.strftime('%m月%d日 %H:%M')}"
-                f.write(f"**时间窗口**: {win}\n")
-            f.write(f"**关注列表 AI 推文**: {stats['new_tweets_count']}\n")
-            if trending_tweets:
-                f.write(f"**全网热门 AI 推文**: {stats.get('trending_count', 0)}\n")
-            f.write(f"**总计**: {total}\n\n")
-
-            if ai_summary:
-                f.write("## AI 智能总结\n\n")
-                f.write(ai_summary)
-                f.write("\n\n")
-
-            if data:
-                f.write("## 关注列表\n\n")
-                f.write("| 用户 | AI 推文数 |\n")
-                f.write("|------|----------|\n")
-                for ud in sorted(data, key=lambda x: len(x["tweets"]), reverse=True):
-                    f.write(f"| @{ud['user']['username']} | {len(ud['tweets'])} |\n")
-                f.write("\n")
-
-            if trending_tweets:
-                f.write("## 全网热门 TOP\n\n")
-                f.write("| 用户 | 内容摘要 | views | likes |\n")
-                f.write("|------|----------|-------|-------|\n")
-                for t in trending_tweets[:10]:
-                    author = t.get("author", {}).get("userName", "?")
-                    text = t.get("text", "")[:60].replace("\n", " ").replace("|", "/")
-                    views = t.get("viewCount", 0)
-                    likes = t.get("likeCount", 0)
-                    f.write(f"| @{author} | {text}... | {views:,} | {likes:,} |\n")
-                f.write("\n")
-
-            f.write(f"*详见最新的 `ai_tweets_*.md` 文件*\n")
-
-    # ── 周报/月报 ──────────────────────────────────────────
+    # ── 周报/月报辅助 ────────────────────────────────────────
 
     def _parse_summary_items(self, summary_text):
         """解析 AI 总结文本，提取每条新闻条目"""
@@ -1775,151 +2186,69 @@ class TwitterWatchdog:
             print(f"  Claude 整合失败: {e}")
             return None
 
-    def generate_periodic_report(self, period, date_str):
-        """生成周报或月报
-
-        Args:
-            period: "monthly" or "weekly"
-            date_str: "YYYY-MM" for monthly, "YYYY-MM-DD" for weekly
-        """
-        output_path = Path(self.output_config["directory"])
-
-        if period == "monthly":
-            year, month = date_str.split("-")
-            period_label = f"{year} 年 {int(month)} 月"
-            output_file = output_path / f"monthly_report_{year}_{month}.md"
-        else:
-            start_date = datetime.strptime(date_str, "%Y-%m-%d")
-            end_date = start_date + timedelta(days=7)
-            period_label = f"{start_date.strftime('%m/%d')} ~ {end_date.strftime('%m/%d')}"
-            output_file = output_path / f"weekly_report_{date_str.replace('-', '_')}.md"
-
-        label = "月报" if period == "monthly" else "周报"
-        print(f"=== 生成{label} ===")
-        print(f"期间: {period_label}")
-        print(f"数据目录: {output_path}")
-
-        # 扫描历史 JSON 文件
-        json_files = sorted(output_path.glob("ai_tweets_*.json"))
-        if not json_files:
-            print("  未找到历史报告文件")
-            return
-
-        # 按日期范围过滤
-        matched_files = []
-        for f in json_files:
-            parts = f.stem.split("_")  # ai_tweets_20260211_095245
-            if len(parts) >= 3:
-                file_date_str = parts[2]  # 20260211
-                if period == "monthly":
-                    if file_date_str.startswith(f"{year}{month}"):
-                        matched_files.append(f)
-                else:
-                    try:
-                        file_date = datetime.strptime(file_date_str, "%Y%m%d")
-                        if start_date <= file_date < end_date:
-                            matched_files.append(f)
-                    except ValueError:
-                        pass
-
-        if not matched_files:
-            print(f"  在指定期间内未找到报告文件")
-            return
-
-        print(f"  找到 {len(matched_files)} 个报告文件")
-
-        # 提取所有 AI 总结条目
-        all_items = []
-        for f in matched_files:
-            try:
-                with open(f, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-                summary = data.get("ai_summary", "")
-                if summary:
-                    items = self._parse_summary_items(summary)
-                    all_items.extend(items)
-                    print(f"  {f.name}: {len(items)} 条")
-            except Exception as e:
-                print(f"  {f.name}: 读取失败 - {e}")
-
-        if not all_items:
-            print("  未提取到任何信息条目")
-            return
-
-        print(f"  共提取 {len(all_items)} 条（去重前）")
-
-        # 去重
-        unique_items = self._deduplicate_items(all_items)
-        print(f"  去重后: {len(unique_items)} 条")
-
-        # Claude 整合
-        consolidated = self._claude_consolidate(unique_items, period, period_label)
-
-        # 生成报告
-        report_title = f"AI 推文{label}"
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        report_content = consolidated or "\n\n".join(item["full_text"] for item in unique_items)
-
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(f"# {report_title} — {period_label}\n\n")
-            f.write(report_content)
-            f.write("\n")
-        print(f"\n  Markdown: {output_file}")
-
-        # 生成 HTML 版本（复用共享模板）
-        html_file = output_file.with_suffix(".html")
-        body_html = self._summary_md_to_html(report_content)
-        html_content = self._html_page(
-            f"{report_title} — {period_label}",
-            period_label,
-            body_html,
-        )
-        with open(html_file, "w", encoding="utf-8") as f:
-            f.write(html_content)
-        print(f"  HTML: {html_file}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Twitter Watchdog - AI 推文监控工具",
+        description="Twitter Watchdog - AI 推文监控工具（三层架构：抓取 → 分析 → 报告）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-调度策略（UTC+8，建议通过 OpenClaw 实现）：
-  08:00  python3 twitter_watchdog.py --hours-ago 8
-  12:00  python3 twitter_watchdog.py --hours-ago 4
-  18:00  python3 twitter_watchdog.py --hours-ago 6
-  21:00  python3 twitter_watchdog.py --hours-ago 3
-  00:00  python3 twitter_watchdog.py --hours-ago 3
+用法示例：
+  # Layer 1: 只抓取，存原始数据
+  python3 twitter_watchdog.py scrape --hours-ago 6
+
+  # Layer 2: 分析原始数据，生成分析结果
+  python3 twitter_watchdog.py analyze --hours-ago 6
+  python3 twitter_watchdog.py analyze --source raw/20260212_140000.json
+  python3 twitter_watchdog.py analyze --from "2026-02-12 08:00" --to "2026-02-12 14:00"
+
+  # Layer 3: 从分析结果生成报告
+  python3 twitter_watchdog.py report
+  python3 twitter_watchdog.py report --source analysis/20260212_143000.json
+  python3 twitter_watchdog.py report --daily 2026-02-12
+  python3 twitter_watchdog.py report --weekly 2026-02-10
+  python3 twitter_watchdog.py report --monthly 2026-02
+
+  # 流水线模式（向后兼容，等价于 scrape + analyze + report）
+  python3 twitter_watchdog.py --hours-ago 6
 """,
     )
+    # 顶层参数（兼容旧用法 + 所有子命令共用）
     parser.add_argument("--config", help="配置文件路径")
-    parser.add_argument("--hours-ago", type=int, help="只保留最近 N 小时内的推文")
+    parser.add_argument("--output-dir", help="输出目录")
+    parser.add_argument("--hours-ago", type=int, help="时间窗口（小时）")
     parser.add_argument("--max-followings", type=int, help="关注列表抓取范围（0=全部）")
     parser.add_argument("--tweets-per-user", type=int, help="每个用户最多推文数")
     parser.add_argument("--trending-count", type=int, help="热门推文最多条数")
     parser.add_argument("--trending-query", help="热门搜索关键词（Twitter 搜索语法）")
-    parser.add_argument("--min-faves", type=int, help="热门推文最低浏览量（默认 2000）")
+    parser.add_argument("--min-faves", type=int, help="热门推文最低浏览量")
     parser.add_argument("--language", help="语言过滤（all/en/zh/ja...）")
     parser.add_argument("--exclude-users", help="排除的用户名（逗号分隔）")
-    parser.add_argument("--output-dir", help="输出目录")
     parser.add_argument("--reset-state", action="store_true", help="重置去重状态")
     parser.add_argument("--no-trending", action="store_true", help="禁用热门搜索")
     parser.add_argument("--no-summary", action="store_true", help="禁用 AI 总结")
-    parser.add_argument("--monthly", metavar="YYYY-MM", help="生成月报（如 2026-02）")
-    parser.add_argument("--weekly", metavar="YYYY-MM-DD", help="生成周报（从指定日期起 7 天）")
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    # scrape
+    subparsers.add_parser("scrape", help="Layer 1: 抓取推文原始数据")
+
+    # analyze
+    sp_analyze = subparsers.add_parser("analyze", help="Layer 2: AI 分析原始数据")
+    sp_analyze.add_argument("--source", help="指定 raw JSON 文件路径")
+    sp_analyze.add_argument("--from", dest="time_from", help="起始时间（如 '2026-02-12 08:00'）")
+    sp_analyze.add_argument("--to", dest="time_to", help="结束时间（如 '2026-02-12 14:00'）")
+
+    # report
+    sp_report = subparsers.add_parser("report", help="Layer 3: 生成报告")
+    sp_report.add_argument("--source", help="指定 analysis JSON 文件路径")
+    sp_report.add_argument("--daily", metavar="YYYY-MM-DD", help="生成日报")
+    sp_report.add_argument("--weekly", metavar="YYYY-MM-DD", help="生成周报（从指定日期起 7 天）")
+    sp_report.add_argument("--monthly", metavar="YYYY-MM", help="生成月报")
 
     args = parser.parse_args()
 
-    # 周报/月报模式：不需要 Twitter API，只需要配置和历史数据
-    if args.monthly or args.weekly:
-        watchdog = TwitterWatchdog(config_file=args.config, cli_args=args, report_only=True)
-        period = "monthly" if args.monthly else "weekly"
-        date_str = args.monthly or args.weekly
-        watchdog.generate_periodic_report(period, date_str)
-        print("\n=== 完成 ===")
-        return
-
+    # 重置状态
     if args.reset_state:
         state_file = ".twitter_watchdog_state.json"
         if os.path.exists(state_file):
@@ -1928,8 +2257,39 @@ def main():
         else:
             print("无状态文件，无需重置")
 
-    watchdog = TwitterWatchdog(config_file=args.config, cli_args=args)
-    watchdog.scrape_followings_tweets()
+    # 路由
+    if args.command == "scrape":
+        watchdog = TwitterWatchdog(config_file=args.config, cli_args=args)
+        watchdog.run_scrape()
+
+    elif args.command == "analyze":
+        watchdog = TwitterWatchdog(config_file=args.config, cli_args=args, report_only=True)
+        time_from = None
+        time_to = None
+        if getattr(args, "time_from", None):
+            time_from = datetime.strptime(args.time_from, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_CN)
+        if getattr(args, "time_to", None):
+            time_to = datetime.strptime(args.time_to, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_CN)
+        watchdog.run_analyze(
+            source=getattr(args, "source", None),
+            time_from=time_from,
+            time_to=time_to,
+        )
+
+    elif args.command == "report":
+        watchdog = TwitterWatchdog(config_file=args.config, cli_args=args, report_only=True)
+        watchdog.run_report(
+            source=getattr(args, "source", None),
+            daily=getattr(args, "daily", None),
+            weekly=getattr(args, "weekly", None),
+            monthly=getattr(args, "monthly", None),
+        )
+
+    else:
+        # 无子命令 → 流水线（向后兼容）
+        watchdog = TwitterWatchdog(config_file=args.config, cli_args=args)
+        watchdog.run_pipeline()
+
     print("\n=== 完成 ===")
 
 

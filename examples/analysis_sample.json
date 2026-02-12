@@ -1,0 +1,621 @@
+{
+  "metadata": {
+    "analyzed_at": "2026-02-12T15:38:13.156050+08:00",
+    "source_files": [
+      "20260212_153122.json"
+    ],
+    "time_window": {
+      "from": "2026-02-10T23:38:13.156050+08:00",
+      "to": "2026-02-12T15:38:13.156050+08:00"
+    },
+    "total_tweets": 1712,
+    "filtered_count": 129,
+    "model": "claude-sonnet-4-5-20250929"
+  },
+  "ai_tweet_ids": [
+    "2021746071085711583",
+    "2021625934210613442",
+    "2021351353222873496",
+    "2021711269426765853",
+    "2021754659590033565"
+  ],
+  "summary": "## 本期要点\n\n- 智谱 AI 发布 GLM-5 模型，参数规模从 355B 扩展到 700B（40B 激活），在 Artificial Analysis 开源权重模型排行榜中位居第一，并在 Zai.org 平台上线\n- Anthropic 主动发布 Claude Opus 4.5 安全风险报告，因该模型接近 AI Safety Level 4 阈值（自主 AI 研发能力），承诺为所有未来模型撰写破坏性风险报告，这是首家为单个模型发布此类文件的 AI 公司\n- OpenAI Codex 编程工具发布，Sam Altman 称正快速赢得开发者市场，超 100 万人在首周下载 Codex App\n- Obsidian 推出 1.12 版本并新增 CLI 工具，允许从终端控制所有功能，可与 Claude Code 等 AI 编程工具深度集成\n- 字节 Seedance 2.0 引发海外热潮邀请码难求，支持文生视频、图生视频、分身视频和音效生成，现已接入豆包 App\n\n## AI 产品与工具\n\n- [Happycapy 正式开放](https://x.com/vista8/status/20\n\n... (truncated for example)",
+  "filtered_followings": [
+    {
+      "user": {
+        "id": "1726486879456096256",
+        "name": "Z.ai",
+        "screen_name": "Zai_org",
+        "userName": "Zai_org",
+        "location": "user_feedback@z.ai",
+        "url": "https://t.co/1pJmNTSkSD",
+        "description": "The AI Lab behind GLM models, dedicated to inspiring the development of AGI to benefit humanity.\n\nhttps://t.co/7a5aSCUNcZ\nhttps://t.co/x14hb3klXm",
+        "email": null,
+        "protected": false,
+        "verified": false,
+        "followers_count": 47607,
+        "following_count": 227,
+        "friends_count": 227,
+        "favourites_count": 1139,
+        "statuses_count": 962,
+        "media_tweets_count": 195,
+        "created_at": "Mon Nov 20 06:25:51 +0000 2023",
+        "profile_banner_url": "https://pbs.twimg.com/profile_banners/1726486879456096256/1770807010",
+        "profile_image_url_https": "https://pbs.twimg.com/profile_images/1970775077181411328/W8XKaUIh_normal.jpg",
+        "can_dm": false,
+        "username": "Zai_org",
+        "public_metrics": {
+          "followers_count": 47607
+        }
+      },
+      "tweets": [
+        {
+          "type": "tweet",
+          "id": "2021754659590033565",
+          "url": "https://x.com/Zai_org/status/2021754659590033565",
+          "twitterUrl": "https://twitter.com/Zai_org/status/2021754659590033565",
+          "text": "GLM-5, Gameboy and Long-Task Era\n→ 700+ tool calls, 800+ context handoffs, and a single agent running for over 24 hours.\n\nhttps://t.co/FIcgTj7qZC https://t.co/fzGN8AmB5M",
+          "source": "Twitter for iPhone",
+          "retweetCount": 167,
+          "replyCount": 64,
+          "likeCount": 1731,
+          "quoteCount": 65,
+          "viewCount": 154139,
+          "createdAt": "Thu Feb 12 01:14:07 +0000 2026",
+          "lang": "en",
+          "bookmarkCount": 779,
+          "isReply": false,
+          "inReplyToId": null,
+          "conversationId": "2021754659590033565",
+          "displayTextRange": [
+            0,
+            145
+          ],
+          "inReplyToUserId": null,
+          "inReplyToUsername": null,
+          "author": {
+            "type": "user",
+            "userName": "Zai_org",
+            "url": "https://x.com/Zai_org",
+            "twitterUrl": "https://twitter.com/Zai_org",
+            "id": "1726486879456096256",
+            "name": "Z.ai",
+            "isVerified": false,
+            "isBlueVerified": false,
+            "verifiedType": "Business",
+            "profilePicture": "https://pbs.twimg.com/profile_images/1970775077181411328/W8XKaUIh_normal.jpg",
+            "coverPicture": "https://pbs.twimg.com/profile_banners/1726486879456096256/1770807010",
+            "description": "",
+            "location": "user_feedback@z.ai",
+            "followers": 47607,
+            "following": 227,
+            "status": "",
+            "canDm": true,
+            "canMediaTag": true,
+            "createdAt": "Mon Nov 20 06:25:51 +0000 2023",
+            "entities": {
+              "description": {
+                "urls": []
+              },
+              "url": {}
+            },
+            "fastFollowersCount": 0,
+            "favouritesCount": 1139,
+            "hasCustomTimelines": true,
+            "isTranslator": false,
+            "mediaCount": 195,
+            "statusesCount": 962,
+            "withheldInCountries": [],
+            "affiliatesHighlightedLabel": {},
+            "possiblySensitive": false,
+            "pinnedTweetIds": [
+              "2021638634739527773"
+            ],
+            "profile_bio": {
+              "description": "The AI Lab behind GLM models, dedicated to inspiring the development of AGI to benefit humanity.\n\nhttps://t.co/7a5aSCUNcZ\nhttps://t.co/x14hb3klXm",
+              "entities": {
+                "description": {
+                  "urls": [
+                    {
+                      "display_url": "huggingface.co/zai-org",
+                      "expanded_url": "https://huggingface.co/zai-org",
+                      "indices": [
+                        98,
+                        121
+                      ],
+                      "url": "https://t.co/7a5aSCUNcZ"
+                    },
+                    {
+                      "display_url": "discord.gg/QR7SARHRxK",
+                      "expanded_url": "http://discord.gg/QR7SARHRxK",
+                      "indices": [
+                        122,
+                        145
+                      ],
+                      "url": "https://t.co/x14hb3klXm"
+                    }
+                  ]
+                },
+                "url": {
+                  "urls": [
+                    {
+                      "display_url": "z.ai",
+                      "expanded_url": "http://z.ai",
+                      "indices": [
+                        0,
+                        23
+                      ],
+                      "url": "https://t.co/1pJmNTSkSD"
+                    }
+                  ]
+                }
+              }
+            },
+            "isAutomated": false,
+            "automatedBy": null
+          },
+          "extendedEntities": {
+            "media": [
+              {
+                "additional_media_info": {
+                  "monetizable": false
+                },
+                "allow_download_status": {
+                  "allow_download": true
+                },
+                "display_url": "pic.twitter.com/fzGN8AmB5M",
+                "expanded_url": "https://twitter.com/Zai_org/status/2021754659590033565/video/1",
+                "ext_media_availability": {
+                  "status": "Available"
+                },
+                "id_str": "2021753977998913538",
+                "indices": [
+                  146,
+                  169
+                ],
+                "media_key": "13_2021753977998913538",
+                "media_results": {
+                  "id": "QXBpTWVkaWFSZXN1bHRzOgwABAoAARwOtogB27ACAAA=",
+                  "result": {
+                    "__typename": "ApiMedia",
+                    "id": "QXBpTWVkaWE6DAAECgABHA62iAHbsAIAAA==",
+                    "media_key": "13_2021753977998913538"
+                  }
+                },
+                "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2021753977998913538/img/FLuk3vdwLNgKvlyP.jpg",
+                "original_info": {
+                  "focus_rects": [],
+                  "height": 944,
+                  "width": 1280
+                },
+                "sizes": {
+                  "large": {
+                    "h": 944,
+                    "w": 1280
+                  }
+                },
+                "type": "video",
+                "url": "https://t.co/fzGN8AmB5M",
+                "video_info": {
+                  "aspect_ratio": [
+                    80,
+                    59
+                  ],
+                  "duration_millis": 33333,
+                  "variants": [
+                    {
+                      "content_type": "application/x-mpegURL",
+                      "url": "https://video.twimg.com/amplify_video/2021753977998913538/pl/mp9-XBIWuOG7sxnu.m3u8?tag=21"
+                    },
+                    {
+                      "bitrate": 256000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/amplify_video/2021753977998913538/vid/avc1/366x270/teew-nBGhMLLjHDg.mp4?tag=21"
+                    },
+                    {
+                      "bitrate": 832000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/amplify_video/2021753977998913538/vid/avc1/488x360/8NK5mpHLKKngmK8C.mp4?tag=21"
+                    },
+                    {
+                      "bitrate": 2176000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/amplify_video/2021753977998913538/vid/avc1/976x720/F8VKnCI27CJdg21T.mp4?tag=21"
+                    },
+                    {
+                      "bitrate": 10368000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/amplify_video/2021753977998913538/vid/avc1/1280x944/X9PWrgbQg1yuJ3vw.mp4?tag=21"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "card": null,
+          "place": {},
+          "entities": {
+            "urls": [
+              {
+                "display_url": "blog.e01.ai/glm5-gameboy-a…",
+                "expanded_url": "http://blog.e01.ai/glm5-gameboy-and-long-task-era-64db7074a026",
+                "indices": [
+                  122,
+                  145
+                ],
+                "url": "https://t.co/FIcgTj7qZC"
+              }
+            ]
+          },
+          "quoted_tweet": null,
+          "retweeted_tweet": null,
+          "isLimitedReply": false,
+          "article": null
+        }
+      ]
+    },
+    {
+      "user": {
+        "id": "1875078099538423808",
+        "name": "MiniMax (official)",
+        "screen_name": "MiniMax_AI",
+        "userName": "MiniMax_AI",
+        "location": "San Francisco",
+        "url": "https://t.co/qwiwSLZj7I",
+        "description": "Agent: https://t.co/XzaTmAos0V\nCode Plan: https://t.co/syQRhgvqy8\nAPI:https://t.co/fHRdSV7BwZ\nDiscord: https://t.co/uYnFNkYh7y",
+        "email": null,
+        "protected": false,
+        "verified": false,
+        "followers_count": 43084,
+        "following_count": 399,
+        "friends_count": 399,
+        "favourites_count": 4786,
+        "statuses_count": 876,
+        "media_tweets_count": 135,
+        "created_at": "Fri Jan 03 07:14:02 +0000 2025",
+        "profile_banner_url": "https://pbs.twimg.com/profile_banners/1875078099538423808/1735888954",
+        "profile_image_url_https": "https://pbs.twimg.com/profile_images/1875100548535574529/VxHk9HyU_normal.jpg",
+        "can_dm": false,
+        "username": "MiniMax_AI",
+        "public_metrics": {
+          "followers_count": 43084
+        }
+      },
+      "tweets": [
+        {
+          "type": "tweet",
+          "id": "2021599008880459982",
+          "url": "https://x.com/MiniMax_AI/status/2021599008880459982",
+          "twitterUrl": "https://twitter.com/MiniMax_AI/status/2021599008880459982",
+          "text": "MiniMax × Cursor Global Hackathon \nTop builds. Two cities. \n🇬🇧 UK — Feb 12  https://t.co/Pc1CiYwQPd\n🇲🇦 Morocco — Feb 13  https://t.co/sRUWzpYw0U\n\nSnacks provided. Curiosity required. \nSee you in the room!",
+          "source": "Twitter for iPhone",
+          "retweetCount": 4,
+          "replyCount": 5,
+          "likeCount": 126,
+          "quoteCount": 0,
+          "viewCount": 63056,
+          "createdAt": "Wed Feb 11 14:55:37 +0000 2026",
+          "lang": "en",
+          "bookmarkCount": 9,
+          "isReply": false,
+          "inReplyToId": null,
+          "conversationId": "2021599008880459982",
+          "displayTextRange": [
+            0,
+            228
+          ],
+          "inReplyToUserId": null,
+          "inReplyToUsername": null,
+          "author": {
+            "type": "user",
+            "userName": "MiniMax_AI",
+            "url": "https://x.com/MiniMax_AI",
+            "twitterUrl": "https://twitter.com/MiniMax_AI",
+            "id": "1875078099538423808",
+            "name": "MiniMax (official)",
+            "isVerified": false,
+            "isBlueVerified": false,
+            "verifiedType": "Business",
+            "profilePicture": "https://pbs.twimg.com/profile_images/1875100548535574529/VxHk9HyU_normal.jpg",
+            "coverPicture": "https://pbs.twimg.com/profile_banners/1875078099538423808/1735888954",
+            "description": "",
+            "location": "San Francisco",
+            "followers": 43084,
+            "following": 399,
+            "status": "",
+            "canDm": true,
+            "canMediaTag": true,
+            "createdAt": "Fri Jan 03 07:14:02 +0000 2025",
+            "entities": {
+              "description": {
+                "urls": []
+              },
+              "url": {}
+            },
+            "fastFollowersCount": 0,
+            "favouritesCount": 4786,
+            "hasCustomTimelines": true,
+            "isTranslator": false,
+            "mediaCount": 135,
+            "statusesCount": 876,
+            "withheldInCountries": [],
+            "affiliatesHighlightedLabel": {},
+            "possiblySensitive": false,
+            "pinnedTweetIds": [
+              "2021579650212704611"
+            ],
+            "profile_bio": {
+              "description": "Agent: https://t.co/XzaTmAos0V\nCode Plan: https://t.co/syQRhgvqy8\nAPI:https://t.co/fHRdSV7BwZ\nDiscord: https://t.co/uYnFNkYh7y",
+              "entities": {
+                "description": {
+                  "urls": [
+                    {
+                      "display_url": "agent.minimax.io",
+                      "expanded_url": "https://agent.minimax.io/",
+                      "indices": [
+                        7,
+                        30
+                      ],
+                      "url": "https://t.co/XzaTmAos0V"
+                    },
+                    {
+                      "display_url": "platform.minimax.io/subscribe/codi…",
+                      "expanded_url": "https://platform.minimax.io/subscribe/coding-plan",
+                      "indices": [
+                        42,
+                        65
+                      ],
+                      "url": "https://t.co/syQRhgvqy8"
+                    },
+                    {
+                      "display_url": "platform.minimax.io",
+                      "expanded_url": "http://platform.minimax.io",
+                      "indices": [
+                        70,
+                        93
+                      ],
+                      "url": "https://t.co/fHRdSV7BwZ"
+                    },
+                    {
+                      "display_url": "discord.gg/minimax",
+                      "expanded_url": "https://discord.gg/minimax",
+                      "indices": [
+                        103,
+                        126
+                      ],
+                      "url": "https://t.co/uYnFNkYh7y"
+                    }
+                  ]
+                },
+                "url": {
+                  "urls": [
+                    {
+                      "display_url": "minimax.io",
+                      "expanded_url": "https://www.minimax.io/",
+                      "indices": [
+                        0,
+                        23
+                      ],
+                      "url": "https://t.co/qwiwSLZj7I"
+                    }
+                  ]
+                }
+              }
+            },
+            "isAutomated": false,
+            "automatedBy": null
+          },
+          "extendedEntities": {
+            "media": [
+              {
+                "allow_download_status": {
+                  "allow_download": true
+                },
+                "display_url": "pic.twitter.com/aycCabIRLo",
+                "expanded_url": "https://twitter.com/MiniMax_AI/status/2021599008880459982/photo/1",
+                "ext_media_availability": {
+                  "status": "Available"
+                },
+                "features": {
+                  "large": {},
+                  "orig": {}
+                },
+                "id_str": "2021597617474748416",
+                "indices": [
+                  229,
+                  252
+                ],
+                "media_key": "3_2021597617474748416",
+                "media_results": {
+                  "id": "QXBpTWVkaWFSZXN1bHRzOgwAAQoAARwOKFJ8W8AACgACHA4plnKaAM4AAA==",
+                  "result": {
+                    "__typename": "ApiMedia",
+                    "id": "QXBpTWVkaWE6DAABCgABHA4oUnxbwAAKAAIcDimWcpoAzgAA",
+                    "media_key": "3_2021597617474748416"
+                  }
+                },
+                "media_url_https": "https://pbs.twimg.com/media/HA4oUnxbwAAedPs.jpg",
+                "original_info": {
+                  "focus_rects": [
+                    {
+                      "h": 1075,
+                      "w": 1920,
+                      "x": 0,
+                      "y": 5
+                    },
+                    {
+                      "h": 1080,
+                      "w": 1080,
+                      "x": 84,
+                      "y": 0
+                    },
+                    {
+                      "h": 1080,
+                      "w": 947,
+                      "x": 151,
+                      "y": 0
+                    },
+                    {
+                      "h": 1080,
+                      "w": 540,
+                      "x": 354,
+                      "y": 0
+                    },
+                    {
+                      "h": 1080,
+                      "w": 1920,
+                      "x": 0,
+                      "y": 0
+                    }
+                  ],
+                  "height": 1080,
+                  "width": 1920
+                },
+                "sizes": {
+                  "large": {
+                    "h": 1080,
+                    "w": 1920
+                  }
+                },
+                "type": "photo",
+                "url": "https://t.co/aycCabIRLo"
+              },
+              {
+                "allow_download_status": {
+                  "allow_download": true
+                },
+                "display_url": "pic.twitter.com/aycCabIRLo",
+                "expanded_url": "https://twitter.com/MiniMax_AI/status/2021599008880459982/photo/1",
+                "ext_media_availability": {
+                  "status": "Available"
+                },
+                "features": {
+                  "large": {
+                    "faces": [
+                      {
+                        "h": 50,
+                        "w": 50,
+                        "x": 494,
+                        "y": 475
+                      },
+                      {
+                        "h": 61,
+                        "w": 61,
+                        "x": 411,
+                        "y": 589
+                      }
+                    ]
+                  },
+                  "orig": {
+                    "faces": [
+                      {
+                        "h": 50,
+                        "w": 50,
+                        "x": 494,
+                        "y": 475
+                      },
+                      {
+                        "h": 61,
+                        "w": 61,
+                        "x": 411,
+                        "y": 589
+                      }
+                    ]
+                  }
+                },
+                "id_str": "2021597663544942592",
+                "indices": [
+                  229,
+                  252
+                ],
+                "media_key": "3_2021597663544942592",
+                "media_results": {
+                  "id": "QXBpTWVkaWFSZXN1bHRzOgwAAQoAARwOKF02WyAACgACHA4plnKaAM4AAA==",
+                  "result": {
+                    "__typename": "ApiMedia",
+                    "id": "QXBpTWVkaWE6DAABCgABHA4oXTZbIAAKAAIcDimWcpoAzgAA",
+                    "media_key": "3_2021597663544942592"
+                  }
+                },
+                "media_url_https": "https://pbs.twimg.com/media/HA4oXTZbIAARSTC.jpg",
+                "original_info": {
+                  "focus_rects": [
+                    {
+                      "h": 448,
+                      "w": 800,
+                      "x": 0,
+                      "y": 352
+                    },
+                    {
+                      "h": 800,
+                      "w": 800,
+                      "x": 0,
+                      "y": 0
+                    },
+                    {
+                      "h": 800,
+                      "w": 702,
+                      "x": 29,
+                      "y": 0
+                    },
+                    {
+                      "h": 800,
+                      "w": 400,
+                      "x": 180,
+                      "y": 0
+                    },
+                    {
+                      "h": 800,
+                      "w": 800,
+                      "x": 0,
+                      "y": 0
+                    }
+                  ],
+                  "height": 800,
+                  "width": 800
+                },
+                "sizes": {
+                  "large": {
+                    "h": 800,
+                    "w": 800
+                  }
+                },
+                "type": "photo",
+                "url": "https://t.co/aycCabIRLo"
+              }
+            ]
+          },
+          "card": null,
+          "place": {},
+          "entities": {
+            "urls": [
+              {
+                "display_url": "luma.com/cw8l2nhn",
+                "expanded_url": "https://luma.com/cw8l2nhn",
+                "indices": [
+                  76,
+                  99
+                ],
+                "url": "https://t.co/Pc1CiYwQPd"
+              },
+              {
+                "display_url": "luma.com/8smnmhaz",
+                "expanded_url": "https://luma.com/8smnmhaz",
+                "indices": [
+                  121,
+                  144
+                ],
+                "url": "https://t.co/sRUWzpYw0U"
+              }
+            ]
+          },
+          "quoted_tweet": null,
+          "retweeted_tweet": null,
+          "isLimitedReply": false,
+          "article": null
+        }
+      ]
+    }
+  ],
+  "filtered_trending": []
+}

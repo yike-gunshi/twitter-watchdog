@@ -4,82 +4,29 @@
 
 ## 它能做什么
 
-1. **日报** — 抓取你 Twitter 关注列表中所有用户的最新推文 + 全网热门 AI 推文，由 Claude 自动判断 AI 相关性，生成事实清单
-2. **周报** — 基于历史日报数据，自动去重合并，生成结构化周报（本期要点 + 分类整理）
-3. **月报** — 基于历史日报数据，自动去重合并，生成结构化月报
+1. **日报** — 抓取你 Twitter 关注列表中所有用户的最新推文 + 全网热门 AI 推文，由 Claude 自动判断 AI 相关性，生成 HTML + Markdown 报告
+2. **周报** — 基于历史分析数据，自动去重合并，生成结构化周报（本期要点 + 分类整理）
+3. **月报** — 基于历史分析数据，自动去重合并，生成结构化月报
 
-## 输出效果
-
-### 日报
+## 三层架构
 
 ```
-- [Obsidian 1.12 发布 CLI 命令行工具](https://x.com/...)。支持从终端控制 Obsidian，
-  可进行创建、读取、编辑、删除笔记，搜索 vault 内容，管理任务等操作。
+Layer 1: scrape          Layer 2: analyze          Layer 3: report
+(数据采集)               (AI 分析)                  (报告生成)
 
-- [Chrome 正在开发 WebMCP](https://x.com/...)。网站可以直接给 AI Agent 暴露结构化工具，
-  预计可将网页扫描时间从 3-4 分钟缩短至 3 秒。
+┌─────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ twitterapi.io│    │ 读取 raw/*.json   │    │ 读取 analysis/   │
+│ 获取关注列表  │    │ 时间窗口切片      │    │ 下载推文配图      │
+│ 抓取全量推文  │    │ 关键词预过滤(可选) │    │ 生成 HTML + MD    │
+│ 搜索热门推文  │    │ Claude 批量筛选    │    │ 聚合 日/周/月报   │
+│ 存 raw JSON  │    │ Claude 批量总结    │    │ 存 reports/       │
+└──────┬──────┘    │ 存 analysis JSON   │    └──────────────────┘
+       │           └──────────────────┘
+       ▼
+  raw/*.json     →    analysis/*.json    →    reports/*.{html,md}
 ```
 
-### 周报 / 月报
-
-```markdown
-# AI 推文周报 — 02/10 ~ 02/17
-
-## 本期要点
-
-- OpenAI 推出 GPT-5.2 Deep Research 升级和 Codex App，首周下载量超 100 万
-- Chrome 正在开发 WebMCP 协议，每个网站将成为 MCP server
-- ...
-
-## AI 产品与工具
-
-- [Claude Cowork 正式登陆 Windows](https://x.com/...)。提供与 macOS 一样的功能
-- [ChatGPT Deep Research 升级为 GPT-5.2](https://x.com/...)。新增内置文档查看器
-- ...
-
-## AI 模型与技术
-## AI 开发者生态
-## AI 行业动态
-## AI 研究与观点
-```
-
-完整示例见 [examples/](examples/) 目录。
-
-## 架构
-
-```
-         ┌──────────────────────────────────┐
-         │        twitterapi.io             │
-         │                                  │
-         │  获取关注列表（带 24h 本地缓存）   │
-         │  抓取用户推文                      │
-         │  全网热门 AI 搜索                  │
-         │  ($0.15/1k tweets)               │
-         └──────────────┬───────────────────┘
-                        │
-                        ▼
-         ┌─────────────────────┐
-         │   时间窗口过滤       │
-         │   去重               │
-         └────────┬────────────┘
-                  │
-                  ▼
-         ┌─────────────────────┐
-         │   Claude API        │
-         │                     │
-         │  1. 判断 AI 相关性   │
-         │  2. 分类情报清单     │
-         └────────┬────────────┘
-                  │
-                  ▼
-         ┌─────────────────────┐
-         │  输出报告            │
-         │  - JSON 数据        │
-         │  - Markdown 日报    │
-         │  - 推文配图          │
-         │  - 结构化周报/月报   │
-         └─────────────────────┘
-```
+每一层独立执行，也可串行流水线运行（向后兼容）。
 
 **只需两个 API Key，开箱即用，中国大陆无需 VPN。**
 
@@ -88,27 +35,6 @@
 | twitterapi.io | 获取关注列表 + 抓取推文 + 热门搜索 | $0.15/1k tweets | 一个 key 搞定所有 Twitter 数据，国内直连 |
 | Claude API | AI 筛选 + 分类总结 + 周报/月报整合 | ~$0.01/次 | 比关键词匹配更准确，能识别语义相关的推文 |
 | X Official API | 获取关注列表（可选 fallback） | 免费 | 非必需，仅当 twitterapi.io 不可用时作为备选 |
-
-## 网络要求
-
-本工具需要访问以下外部服务：
-
-- `api.twitterapi.io` — 抓取推文 + 获取关注列表（国内可直连）
-- Claude API 端点（官方或你配置的代理地址）
-
-**如果你在中国大陆**，需要确保运行环境能访问上述地址。常见方案：
-
-1. **系统代理 / VPN** — 开启全局或规则代理，确保终端流量走代理
-2. **终端代理** — 在运行前设置环境变量：
-   ```bash
-   export https_proxy=http://127.0.0.1:7890
-   export http_proxy=http://127.0.0.1:7890
-   ```
-   其中 `7890` 换成你代理软件的实际端口（Clash 默认 7890，V2Ray 默认 1080 等）
-3. **在海外服务器上运行** — 部署到 VPS 后通过 cron 定时执行
-4. **Claude API 代理** — 如果只有 Claude API 无法直连，可在 `config.yaml` 的 `ai_summary.base_url` 配置兼容 Anthropic API 的代理地址
-
-> 注意：周报和月报只需要 Claude API（不访问 Twitter），所以如果你已有历史日报数据，生成周报/月报时不需要翻墙。
 
 ## 快速开始
 
@@ -123,27 +49,7 @@ source venv/bin/activate
 pip install requests pyyaml
 ```
 
-### 2. 获取 API 凭证
-
-你只需要准备**两个** API Key：
-
-**a) twitterapi.io（按量付费）**
-
-1. 前往 [twitterapi.io](https://twitterapi.io/) 注册
-2. 获取 API Key
-3. 费用：$0.15/1000 条推文（获取关注列表 + 抓取推文共用）
-
-**b) Claude API**
-
-1. 前往 [console.anthropic.com](https://console.anthropic.com/) 获取 API Key
-2. 或使用兼容 Anthropic API 的第三方代理服务（在 `base_url` 中配置）
-3. 也可通过环境变量 `ANTHROPIC_API_KEY` 设置
-
-**c) X Official API（可选，非必需）**
-
-如果你已有 X 开发者账号，可以填入 Consumer Key/Secret 作为获取关注列表的 fallback。不填也完全不影响使用。
-
-### 3. 配置
+### 2. 配置
 
 ```bash
 cp config/config.yaml.example config/config.yaml
@@ -165,169 +71,168 @@ ai_summary:
   # base_url: "https://your-proxy.com/api"  # 可选：API 代理地址
 ```
 
-### 4. 运行
+### 3. 运行
 
 ```bash
-# 抓取最近 24 小时的 AI 推文（日报）
+# 流水线模式（三步串行，最简单）
 python3 scripts/twitter_watchdog.py --hours-ago 24
 
-# 抓取最近 4 小时
-python3 scripts/twitter_watchdog.py --hours-ago 4
-
-# 生成周报（从指定日期起 7 天）
-python3 scripts/twitter_watchdog.py --weekly 2026-02-10
-
-# 生成月报
-python3 scripts/twitter_watchdog.py --monthly 2026-02
-
-# 指定输出目录
-python3 scripts/twitter_watchdog.py --hours-ago 8 --output-dir ./my_output
+# 或者分层执行
+python3 scripts/twitter_watchdog.py --hours-ago 24 scrape     # 只抓取
+python3 scripts/twitter_watchdog.py --hours-ago 24 analyze    # 只分析
+python3 scripts/twitter_watchdog.py report                     # 只生成报告
 ```
 
-## 命令行参数
+## 命令行用法
 
-### 日报参数
+### 子命令
+
+```bash
+# Layer 1: 抓取原始推文（不做 AI 过滤，保存全量）
+python3 scripts/twitter_watchdog.py [全局参数] scrape
+
+# Layer 2: AI 分析原始数据
+python3 scripts/twitter_watchdog.py [全局参数] analyze [--source RAW_FILE]
+python3 scripts/twitter_watchdog.py [全局参数] analyze --from "2026-02-12 08:00" --to "2026-02-12 14:00"
+
+# Layer 3: 从分析结果生成报告
+python3 scripts/twitter_watchdog.py [全局参数] report [--source ANALYSIS_FILE]
+python3 scripts/twitter_watchdog.py [全局参数] report --daily 2026-02-12
+python3 scripts/twitter_watchdog.py [全局参数] report --weekly 2026-02-10
+python3 scripts/twitter_watchdog.py [全局参数] report --monthly 2026-02
+
+# 流水线（无子命令 = scrape + analyze + report 三步串行，向后兼容）
+python3 scripts/twitter_watchdog.py [全局参数]
+```
+
+> **注意**：全局参数（如 `--hours-ago`、`--config`）必须放在子命令前面。
+
+### 全局参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--hours-ago N` | 只保留最近 N 小时内的推文 | 不限 |
+| `--config PATH` | 配置文件路径 | `config/config.yaml` |
+| `--output-dir PATH` | 输出目录 | 见配置文件 |
+| `--hours-ago N` | 时间窗口（小时） | 不限 |
 | `--max-followings N` | 关注列表抓取范围（0=全部） | 0 |
 | `--tweets-per-user N` | 每个用户最多推文数 | 20 |
 | `--trending-count N` | 热门推文最多条数 | 20 |
-| `--trending-query "..."` | 热门搜索关键词（Twitter 搜索语法） | 见配置文件 |
 | `--min-faves N` | 热门推文最低浏览量 | 2000 |
 | `--language LANG` | 语言过滤（all/en/zh/ja...） | all |
-| `--exclude-users "a,b"` | 排除的用户名（逗号分隔） | 无 |
-| `--output-dir PATH` | 输出目录 | 见配置文件 |
-| `--reset-state` | 重置去重状态，重新拉取全量 | - |
-| `--no-trending` | 禁用热门搜索（只看关注列表） | - |
-| `--no-summary` | 禁用 AI 总结（只抓取原始推文） | - |
+| `--exclude-users "a,b"` | 排除的用户名 | 无 |
+| `--reset-state` | 重置去重状态 | - |
+| `--no-trending` | 禁用热门搜索 | - |
+| `--no-summary` | 禁用 AI 总结 | - |
 
-### 周报 / 月报参数
+### analyze 子命令参数
 
-| 参数 | 说明 | 示例 |
-|------|------|------|
-| `--weekly YYYY-MM-DD` | 生成从指定日期起 7 天的周报 | `--weekly 2026-02-10` |
-| `--monthly YYYY-MM` | 生成指定月份的月报 | `--monthly 2026-02` |
+| 参数 | 说明 |
+|------|------|
+| `--source PATH` | 指定 raw JSON 文件路径（默认取最新） |
+| `--from "YYYY-MM-DD HH:MM"` | 起始时间 |
+| `--to "YYYY-MM-DD HH:MM"` | 结束时间 |
 
-周报和月报基于 output 目录中的历史 `ai_tweets_*.json` 文件生成，**不需要 Twitter API 凭证**，只需要 Claude API。
+### report 子命令参数
 
-所有参数都会覆盖 `config.yaml` 中的对应配置。
+| 参数 | 说明 |
+|------|------|
+| `--source PATH` | 指定 analysis JSON 文件路径（默认取最新） |
+| `--daily YYYY-MM-DD` | 生成日报（聚合当天所有 analysis） |
+| `--weekly YYYY-MM-DD` | 生成周报（从指定日期起 7 天） |
+| `--monthly YYYY-MM` | 生成月报 |
+
+## 输出目录结构
+
+```
+output/
+├── raw/                          # Layer 1: 原始抓取数据
+│   ├── 20260212_080000.json
+│   └── 20260212_140000.json
+├── analysis/                     # Layer 2: AI 分析结果
+│   ├── 20260212_083000.json
+│   └── 20260212_143000.json
+└── reports/                      # Layer 3: 最终报告
+    ├── 20260212_083000.html
+    ├── 20260212_083000.md
+    ├── daily_20260212.html       # 日报
+    ├── weekly_20260210.html      # 周报
+    ├── monthly_202602.html       # 月报
+    ├── latest.html               # → 最新报告
+    └── images/                   # 推文配图
+```
+
+### 数据格式示例
+
+见 [examples/](examples/) 目录：
+- `raw_sample.json` — Layer 1 原始数据示例
+- `analysis_sample.json` — Layer 2 分析结果示例
 
 ## 工作原理
 
-### 日报流程
+### Layer 1: scrape（数据采集）
 
-1. **获取关注列表** — X 官方 API 获取你的关注用户（免费，带 24h 本地缓存）
-2. **抓取推文** — twitterapi.io 抓取每个用户的最新推文 + 全网热门 AI 搜索
-3. **时间窗口过滤** — 根据 `--hours-ago` 过滤，自动去重
-4. **AI 智能筛选** — Claude 判断每条推文是否与 AI 相关（ai_filter 模式）
-5. **生成情报清单** — Claude 生成结构化的事实清单，每条附原文链接
-6. **保存报告** — 输出 JSON + Markdown 日报到 output 目录
+1. **获取关注列表** — twitterapi.io 获取你的关注用户（带 24h 本地缓存）
+2. **抓取推文** — 每个用户的最新推文（`--hours-ago` 控制分页深度）
+3. **全网热门搜索** — twitterapi.io 搜索全网 AI 相关热门推文
+4. **去重保存** — 自动去重后存入 `output/raw/YYYYMMDD_HHMMSS.json`
 
-### 周报 / 月报流程
+关键：**不做任何 AI/关键词过滤**，保存全量原始数据，方便后续重新分析。
 
-1. **扫描历史数据** — 读取 output 目录中指定日期范围的 `ai_tweets_*.json` 文件
-2. **提取新闻条目** — 从每个 JSON 的 `ai_summary` 字段解析出新闻条目
-3. **本地去重** — 按 URL 去重，保留描述最详细的版本
-4. **Claude 整合** — 发送给 Claude 进行最终整合：生成"本期要点" + 分类整理
-5. **保存报告** — 输出 `weekly_report_YYYY_MM_DD.md` 或 `monthly_report_YYYY_MM.md`
+### Layer 2: analyze（AI 分析）
 
-> 周报/月报的质量取决于历史日报数据的完整性。建议通过定时任务每天运行 3~5 次日报，确保数据覆盖全天。
+1. **读取 raw JSON** — 支持 `--source` 指定文件、`--from/--to` 时间范围、`--hours-ago` 窗口
+2. **时间窗口过滤** — 按时间切片
+3. **关键词预过滤** — 当 `ai_filter: false` 时生效，`ai_filter: true` 时跳过（交给 Claude）
+4. **Claude AI 筛选** — 发送全量推文，让 Claude 判断哪些与 AI 相关
+5. **Claude 生成总结** — 结构化分类情报清单
+6. **保存分析结果** — 存入 `output/analysis/YYYYMMDD_HHMMSS.json`
 
-## AI 筛选模式
+### Layer 3: report（报告生成）
 
-配置 `ai_summary.ai_filter: true` 后（默认开启），工作流变为：
-
-1. **抓取全量推文** — 不做关键词预过滤，收集关注列表所有推文
-2. **发送给 Claude** — 一次性发送所有推文，让 Claude 判断哪些与 AI 相关
-3. **Claude 返回两部分** — 结构化的情报清单 + AI 相关推文 ID 列表
-4. **过滤数据** — 根据 Claude 返回的 ID 过滤原始数据，只保留 AI 相关推文
-5. **生成报告** — 基于过滤后的数据生成 Markdown/JSON 报告
-
-如果设为 `false`，则退回关键词匹配模式（使用 `filters.keywords.include` 列表）。
-
-## 输出文件
-
-### 日报（每次运行生成）
-
-| 文件 | 说明 |
-|------|------|
-| `ai_tweets_YYYYMMDD_HHMMSS.json` | 完整数据，含所有推文原始字段和 AI 总结文本（供周报/月报使用） |
-| `ai_tweets_YYYYMMDD_HHMMSS.md` | Markdown 详细报告，含分类 AI 总结 + 推文配图 + 每条推文详情 |
-| `images/YYYYMMDD_HHMMSS/` | 报告中推文的配图（每条推文最多 1 张，自动下载） |
-| `latest_summary.md` | 汇总摘要，每次覆盖更新，适合快速查看 |
-
-### 周报 / 月报
-
-| 文件 | 说明 |
-|------|------|
-| `weekly_report_YYYY_MM_DD.md` | 结构化周报（本期要点 + 5 大分类） |
-| `monthly_report_YYYY_MM.md` | 结构化月报（本期要点 + 5 大分类） |
-
-周报/月报的分类包含：AI 产品与工具、AI 模型与技术、AI 开发者生态、AI 行业动态、AI 研究与观点。按重要性从高到低排列，无内容的分类自动省略。
+1. **读取 analysis JSON** — 支持单文件或多文件聚合
+2. **聚合处理** — 日报/周报/月报：解析条目 → URL 去重 → Claude 整合
+3. **下载图片** — 推文配图自动下载到 `reports/images/`
+4. **生成报告** — HTML（自包含页面，暗色模式，导航栏）+ Markdown
 
 ## 调度策略
 
-推荐通过 cron、launchd 或其他调度工具定时执行日报，覆盖全天。日报数据会自动累积在 output 目录，是生成周报/月报的数据来源。
+推荐通过 cron、launchd 定时执行，覆盖全天：
 
 | 时间 (UTC+8) | 命令 | 覆盖区间 |
 |--------------|------|----------|
-| 08:00 | `python3 twitter_watchdog.py --hours-ago 8` | 00:00 ~ 08:00 |
-| 12:00 | `python3 twitter_watchdog.py --hours-ago 4` | 08:00 ~ 12:00 |
-| 18:00 | `python3 twitter_watchdog.py --hours-ago 6` | 12:00 ~ 18:00 |
-| 21:00 | `python3 twitter_watchdog.py --hours-ago 3` | 18:00 ~ 21:00 |
-| 00:00 | `python3 twitter_watchdog.py --hours-ago 3` | 21:00 ~ 00:00 |
+| 08:00 | `python3 twitter_watchdog.py --hours-ago 8 scrape` | 00:00 ~ 08:00 |
+| 12:00 | `python3 twitter_watchdog.py --hours-ago 4 scrape` | 08:00 ~ 12:00 |
+| 18:00 | `python3 twitter_watchdog.py --hours-ago 6 scrape` | 12:00 ~ 18:00 |
+| 00:00 | `python3 twitter_watchdog.py --hours-ago 6 scrape` | 18:00 ~ 00:00 |
 
-每周/每月可额外加一条周报/月报任务：
-
-```bash
-# 每周一 09:00 生成上周周报（上周一日期）
-0 9 * * 1 cd /path/to/twitter-watchdog && venv/bin/python3 scripts/twitter_watchdog.py --weekly $(date -v-7d +\%Y-\%m-\%d)
-
-# 每月 1 号 09:00 生成上月月报
-0 9 1 * * cd /path/to/twitter-watchdog && venv/bin/python3 scripts/twitter_watchdog.py --monthly $(date -v-1m +\%Y-\%m)
-```
-
-### macOS launchd
+分析和报告可以独立调度，也可以在每次抓取后串行：
 
 ```bash
-# 安装定时任务
-bash scripts/install.sh
+# 抓取 + 分析 + 报告（流水线）
+python3 scripts/twitter_watchdog.py --hours-ago 8
 
-# 查看状态
-launchctl list | grep twitter-watchdog
+# 或者分开调度
+python3 scripts/twitter_watchdog.py --hours-ago 8 scrape
+python3 scripts/twitter_watchdog.py --hours-ago 8 analyze
+python3 scripts/twitter_watchdog.py report
 
-# 停止
-launchctl unload ~/Library/LaunchAgents/com.user.twitter-watchdog.plist
+# 每周一生成周报
+python3 scripts/twitter_watchdog.py report --weekly $(date -v-7d +%Y-%m-%d)
 
-# 重启
-launchctl load ~/Library/LaunchAgents/com.user.twitter-watchdog.plist
-```
-
-### crontab
-
-```bash
-crontab -e
-
-# 日报（根据你的路径调整）
-0 8 * * * cd /path/to/twitter-watchdog && venv/bin/python3 scripts/twitter_watchdog.py --hours-ago 8
-0 12 * * * cd /path/to/twitter-watchdog && venv/bin/python3 scripts/twitter_watchdog.py --hours-ago 4
-0 18 * * * cd /path/to/twitter-watchdog && venv/bin/python3 scripts/twitter_watchdog.py --hours-ago 6
-0 21 * * * cd /path/to/twitter-watchdog && venv/bin/python3 scripts/twitter_watchdog.py --hours-ago 3
-0 0 * * * cd /path/to/twitter-watchdog && venv/bin/python3 scripts/twitter_watchdog.py --hours-ago 3
+# 每月 1 号生成月报
+python3 scripts/twitter_watchdog.py report --monthly $(date -v-1m +%Y-%m)
 ```
 
 ## 费用估算
 
-以 100 个关注用户、每天运行 5 次为例：
+以 100 个关注用户、每天运行 4 次为例：
 
 | 项目 | 单次费用 | 每日费用 | 每月费用 |
 |------|----------|----------|----------|
-| twitterapi.io（~100 次 API 调用） | ~$0.02 | ~$0.10 | ~$3 |
-| Claude API — 日报（~30k input + ~3k output tokens） | ~$0.01 | ~$0.05 | ~$1.5 |
+| twitterapi.io（~100 次 API 调用） | ~$0.02 | ~$0.08 | ~$2.4 |
+| Claude API — 分析（~30k input + ~3k output tokens） | ~$0.01 | ~$0.04 | ~$1.2 |
 | Claude API — 周报/月报（按需生成） | ~$0.02/次 | - | ~$0.1 |
-| **合计** | - | **~$0.15** | **~$4.6** |
+| **合计** | - | **~$0.12** | **~$3.7** |
 
 ## License
 
