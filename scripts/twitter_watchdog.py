@@ -877,10 +877,299 @@ class TwitterWatchdog:
             self.save_as_markdown(data, trending_tweets, md_file, source_username, stats, ai_summary_with_images)
             print(f"  Markdown: {md_file}")
 
+        # HTML 报告（用于 web 部署和分享）
+        html_file = output_path / f"ai_tweets_{timestamp}.html"
+        self.save_as_html(html_file, ai_summary_with_images, timestamp)
+        # 同时生成/覆盖 latest.html 方便直接访问
+        latest_html = output_path / "latest.html"
+        self.save_as_html(latest_html, ai_summary_with_images, timestamp)
+        print(f"  HTML: {html_file}")
+
         if self.output_config.get("create_summary", False):
             summary_file = output_path / "latest_summary.md"
             self.create_summary(summary_file, source_username, data, trending_tweets, stats, ai_summary)
             print(f"  汇总: {summary_file}")
+
+    @staticmethod
+    def _html_page(title, subtitle, body_html):
+        """生成自包含 HTML 页面（sticky 导航 + 锚点跳转 + 暗色模式）"""
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+  :root {{
+    --bg: #fafafa; --card: #fff; --text: #1a1a1a; --muted: #666;
+    --border: #e5e5e5; --accent: #2563eb; --accent-light: #eff6ff;
+    --nav-bg: rgba(250,250,250,0.85);
+    --tag-product: #dbeafe; --tag-model: #fce7f3; --tag-dev: #d1fae5;
+    --tag-industry: #fef3c7; --tag-research: #ede9fe;
+    --tag-product-t: #1d4ed8; --tag-model-t: #be185d; --tag-dev-t: #047857;
+    --tag-industry-t: #b45309; --tag-research-t: #6d28d9;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg: #0f0f0f; --card: #1a1a1a; --text: #e5e5e5; --muted: #999;
+      --border: #2a2a2a; --accent: #60a5fa; --accent-light: #1e293b;
+      --nav-bg: rgba(15,15,15,0.85);
+      --tag-product: #1e3a5f; --tag-model: #4a1942; --tag-dev: #14432a;
+      --tag-industry: #4a3728; --tag-research: #2e1f5e;
+      --tag-product-t: #93c5fd; --tag-model-t: #f9a8d4; --tag-dev-t: #6ee7b7;
+      --tag-industry-t: #fcd34d; --tag-research-t: #c4b5fd;
+    }}
+  }}
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  html {{ scroll-behavior: smooth; scroll-padding-top: 64px; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.7;
+    max-width: 820px; margin: 0 auto; padding: 40px 24px 80px;
+  }}
+  /* ── sticky nav ── */
+  .sticky-nav {{
+    position: sticky; top: 0; z-index: 100;
+    background: var(--nav-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    margin: 0 -24px; padding: 12px 24px;
+    display: flex; align-items: center; gap: 12px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }}
+  .sticky-nav::-webkit-scrollbar {{ display: none; }}
+  .sticky-nav .nav-title {{
+    font-size: 15px; font-weight: 700; white-space: nowrap; flex-shrink: 0;
+    color: var(--text);
+  }}
+  .sticky-nav .nav-sep {{
+    width: 1px; height: 20px; background: var(--border); flex-shrink: 0;
+  }}
+  .sticky-nav a {{
+    display: inline-block; padding: 5px 14px; border-radius: 20px; font-size: 13px;
+    text-decoration: none; color: var(--muted); background: transparent;
+    border: 1px solid transparent; transition: all .15s; white-space: nowrap; flex-shrink: 0;
+  }}
+  .sticky-nav a:hover {{ color: var(--accent); border-color: var(--border); }}
+  .sticky-nav a.active {{
+    color: #fff; background: var(--accent); border-color: var(--accent);
+  }}
+  header {{ margin-top: 24px; margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }}
+  header h1 {{ font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }}
+  header .meta {{ color: var(--muted); font-size: 14px; margin-top: 8px; }}
+  .highlights {{ margin-bottom: 36px; }}
+  .highlights h2 {{ font-size: 20px; font-weight: 700; margin-bottom: 16px; }}
+  .highlights ul {{ list-style: none; }}
+  .highlights li {{
+    position: relative; padding: 10px 0 10px 20px; font-size: 15px;
+    border-bottom: 1px solid var(--border);
+  }}
+  .highlights li::before {{
+    content: ""; position: absolute; left: 0; top: 18px;
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  }}
+  .highlights li:last-child {{ border-bottom: none; }}
+  .category {{ margin-bottom: 40px; }}
+  .category-header {{
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--border);
+  }}
+  .category-header h2 {{ font-size: 20px; font-weight: 700; }}
+  .tag {{
+    font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 12px;
+    text-transform: uppercase; letter-spacing: 0.3px;
+  }}
+  .tag-product {{ background: var(--tag-product); color: var(--tag-product-t); }}
+  .tag-model {{ background: var(--tag-model); color: var(--tag-model-t); }}
+  .tag-dev {{ background: var(--tag-dev); color: var(--tag-dev-t); }}
+  .tag-industry {{ background: var(--tag-industry); color: var(--tag-industry-t); }}
+  .tag-research {{ background: var(--tag-research); color: var(--tag-research-t); }}
+  .item {{
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin-bottom: 16px; transition: box-shadow .15s;
+  }}
+  .item:hover {{ box-shadow: 0 2px 12px rgba(0,0,0,0.06); }}
+  .item-title {{ font-size: 16px; font-weight: 600; margin-bottom: 8px; }}
+  .item-title a {{ color: var(--accent); text-decoration: none; }}
+  .item-title a:hover {{ text-decoration: underline; }}
+  .item-desc {{ font-size: 14.5px; line-height: 1.7; }}
+  .item-img {{
+    margin-top: 14px; border-radius: 8px; overflow: hidden;
+    background: var(--bg); text-align: center;
+  }}
+  .item-img img {{ max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 8px; }}
+  footer {{
+    margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border);
+    text-align: center; color: var(--muted); font-size: 13px;
+  }}
+  @media (max-width: 600px) {{
+    body {{ padding: 24px 16px 60px; }}
+    header h1 {{ font-size: 22px; }}
+    .item {{ padding: 16px; }}
+    .sticky-nav {{ margin: 0 -16px; padding: 10px 16px; }}
+  }}
+</style>
+</head>
+<body>
+<div class="sticky-nav" id="sticky-nav">
+  <span class="nav-title">AI 日报</span>
+  <span class="nav-sep"></span>
+</div>
+<header>
+  <h1>{title}</h1>
+  <div class="meta">{subtitle}</div>
+</header>
+{body_html}
+<footer>
+  由 Twitter Watchdog 自动生成 &nbsp;|&nbsp; 数据来源: Twitter 关注列表 + 全网热门
+</footer>
+<script>
+(function() {{
+  // 往 sticky-nav 注入锚点链接
+  var nav = document.getElementById('sticky-nav');
+  var sections = document.querySelectorAll('[data-nav]');
+  sections.forEach(function(sec) {{
+    var a = document.createElement('a');
+    a.href = '#' + sec.id;
+    a.textContent = sec.getAttribute('data-nav');
+    a.setAttribute('data-target', sec.id);
+    nav.appendChild(a);
+  }});
+  // Intersection Observer 高亮当前分类
+  var links = nav.querySelectorAll('a[data-target]');
+  if (!links.length) return;
+  var observer = new IntersectionObserver(function(entries) {{
+    entries.forEach(function(entry) {{
+      if (entry.isIntersecting) {{
+        links.forEach(function(l) {{ l.classList.remove('active'); }});
+        var active = nav.querySelector('a[data-target="' + entry.target.id + '"]');
+        if (active) {{
+          active.classList.add('active');
+          // 滚动 nav 确保 active 可见
+          active.scrollIntoView({{ block: 'nearest', inline: 'center', behavior: 'smooth' }});
+        }}
+      }}
+    }});
+  }}, {{ rootMargin: '-80px 0px -60% 0px', threshold: 0 }});
+  sections.forEach(function(sec) {{ observer.observe(sec); }});
+}})();
+</script>
+</body>
+</html>"""
+
+    def save_as_html(self, output_file, ai_summary_with_images, timestamp):
+        """将 AI 总结转为自包含 HTML 页面"""
+        now = self.now()
+        date_str = now.strftime("%Y 年 %m 月 %d 日")
+        window_desc = ""
+        if self.hours_ago:
+            cutoff = now - timedelta(hours=self.hours_ago)
+            window_desc = f"{cutoff.strftime('%H:%M')} ~ {now.strftime('%H:%M')}"
+
+        body_html = self._summary_md_to_html(ai_summary_with_images or "暂无内容")
+        title = f"AI 日报 — {date_str}"
+        subtitle = f"{date_str} {window_desc}"
+        html = self._html_page(title, subtitle, body_html)
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(html)
+
+    def _summary_md_to_html(self, md_text):
+        """将分类结构的 markdown 总结转为 HTML"""
+        import html as html_mod
+
+        category_tags = {
+            "AI 产品与工具": ("product", "tag-product"),
+            "AI 模型与技术": ("model", "tag-model"),
+            "AI 开发者生态": ("dev", "tag-dev"),
+            "AI 行业动态": ("industry", "tag-industry"),
+            "AI 研究与观点": ("research", "tag-research"),
+        }
+
+        sections = []       # [(type, title, content_lines)]
+        current_title = None
+        current_lines = []
+
+        for line in md_text.split("\n"):
+            if line.startswith("## "):
+                if current_title is not None:
+                    sections.append((current_title, current_lines))
+                current_title = line[3:].strip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+        if current_title is not None:
+            sections.append((current_title, current_lines))
+
+        parts = []
+
+        for title, lines in sections:
+            if title == "本期要点":
+                bullets = [l.lstrip("- ").strip() for l in lines if l.strip().startswith("- ")]
+                if bullets:
+                    parts.append('<div class="highlights" id="highlights" data-nav="本期要点">')
+                    parts.append('<h2>本期要点</h2><ul>')
+                    for b in bullets:
+                        parts.append(f"<li>{html_mod.escape(b)}</li>")
+                    parts.append("</ul></div>")
+                continue
+
+            tag_info = category_tags.get(title)
+            if not tag_info:
+                continue
+            tag_id, tag_class = tag_info
+            anchor = f"cat-{tag_id}"
+            # 短标签用于导航栏
+            short_labels = {
+                "AI 产品与工具": "产品与工具",
+                "AI 模型与技术": "模型与技术",
+                "AI 开发者生态": "开发者生态",
+                "AI 行业动态": "行业动态",
+                "AI 研究与观点": "研究与观点",
+            }
+            nav_label = short_labels.get(title, title)
+
+            parts.append(f'<div class="category" id="{anchor}" data-nav="{html_mod.escape(nav_label)}">')
+            parts.append(f'<div class="category-header"><h2>{html_mod.escape(title)}</h2>'
+                         f'<span class="tag {tag_class}">{tag_id}</span></div>')
+
+            # 解析条目
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                if line.startswith("- ["):
+                    # 提取标题、URL、描述
+                    m = re.match(r'^- \[(.+?)\]\((.+?)\)[。，,.]\s*(.*)$', line, re.DOTALL)
+                    if m:
+                        item_title, item_url, item_desc = m.groups()
+                        # 找图片（往后扫描）
+                        img_html = ""
+                        j = i + 1
+                        while j < len(lines):
+                            sl = lines[j].strip()
+                            if sl.startswith("!["):
+                                img_m = re.match(r'!\[.*?\]\((.+?)\)', sl)
+                                if img_m:
+                                    img_src = img_m.group(1)
+                                    img_html = f'<div class="item-img"><img src="{html_mod.escape(img_src)}" alt="" loading="lazy"></div>'
+                                j += 1
+                            elif sl == "":
+                                j += 1
+                            else:
+                                break
+                        i = j
+
+                        parts.append('<div class="item">')
+                        parts.append(f'<div class="item-title"><a href="{html_mod.escape(item_url)}" target="_blank" rel="noopener">{html_mod.escape(item_title)}</a></div>')
+                        if item_desc.strip():
+                            parts.append(f'<div class="item-desc">{html_mod.escape(item_desc.strip())}</div>')
+                        parts.append(img_html)
+                        parts.append('</div>')
+                        continue
+                i += 1
+
+            parts.append("</div>")
+
+        return "\n".join(parts)
 
     def _write_tweet_md(self, f, tweet):
         """写入单条推文的 Markdown"""
@@ -1215,16 +1504,26 @@ class TwitterWatchdog:
         # 生成报告
         report_title = f"AI 推文{label}"
         output_path.mkdir(parents=True, exist_ok=True)
+
+        report_content = consolidated or "\n\n".join(item["full_text"] for item in unique_items)
+
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(f"# {report_title} — {period_label}\n\n")
-            if consolidated:
-                f.write(consolidated)
-            else:
-                # Fallback: 直接输出去重后的条目
-                f.write("\n\n".join(item["full_text"] for item in unique_items))
+            f.write(report_content)
             f.write("\n")
+        print(f"\n  Markdown: {output_file}")
 
-        print(f"\n报告已保存: {output_file}")
+        # 生成 HTML 版本（复用共享模板）
+        html_file = output_file.with_suffix(".html")
+        body_html = self._summary_md_to_html(report_content)
+        html_content = self._html_page(
+            f"{report_title} — {period_label}",
+            period_label,
+            body_html,
+        )
+        with open(html_file, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        print(f"  HTML: {html_file}")
 
 
 def main():
