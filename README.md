@@ -48,17 +48,16 @@
 ## 架构
 
 ```
-┌─────────────────────┐     ┌──────────────────────┐
-│  X Official API     │     │   twitterapi.io      │
-│  (免费)             │     │   ($0.15/1k tweets)  │
-│                     │     │                      │
-│  获取关注列表        │     │  抓取用户推文         │
-│  (带 24h 本地缓存)  │     │  全网热门 AI 搜索     │
-└────────┬────────────┘     └────────┬─────────────┘
-         │                           │
-         └──────────┬────────────────┘
-                    │
-                    ▼
+         ┌──────────────────────────────────┐
+         │        twitterapi.io             │
+         │                                  │
+         │  获取关注列表（带 24h 本地缓存）   │
+         │  抓取用户推文                      │
+         │  全网热门 AI 搜索                  │
+         │  ($0.15/1k tweets)               │
+         └──────────────┬───────────────────┘
+                        │
+                        ▼
          ┌─────────────────────┐
          │   时间窗口过滤       │
          │   去重               │
@@ -69,7 +68,7 @@
          │   Claude API        │
          │                     │
          │  1. 判断 AI 相关性   │
-         │  2. 生成情报清单     │
+         │  2. 分类情报清单     │
          └────────┬────────────┘
                   │
                   ▼
@@ -77,24 +76,24 @@
          │  输出报告            │
          │  - JSON 数据        │
          │  - Markdown 日报    │
+         │  - 推文配图          │
          │  - 结构化周报/月报   │
          └─────────────────────┘
 ```
 
-**为什么用混合 API 架构？**
+**只需两个 API Key，开箱即用，中国大陆无需 VPN。**
 
-| API | 用途 | 费用 | 原因 |
+| API | 用途 | 费用 | 说明 |
 |-----|------|------|------|
-| X Official API | 获取关注列表 | 免费 | 官方 API 免费提供关注列表接口 |
-| twitterapi.io | 抓取推文内容 + 热门搜索 | $0.15/1k tweets | X 官方推文 API 需要 $100/月，twitterapi.io 便宜 100 倍 |
-| Claude API | AI 筛选 + 总结 + 周报/月报整合 | ~$0.01/次 | 比关键词匹配更准确，能识别语义相关的推文 |
+| twitterapi.io | 获取关注列表 + 抓取推文 + 热门搜索 | $0.15/1k tweets | 一个 key 搞定所有 Twitter 数据，国内直连 |
+| Claude API | AI 筛选 + 分类总结 + 周报/月报整合 | ~$0.01/次 | 比关键词匹配更准确，能识别语义相关的推文 |
+| X Official API | 获取关注列表（可选 fallback） | 免费 | 非必需，仅当 twitterapi.io 不可用时作为备选 |
 
 ## 网络要求
 
 本工具需要访问以下外部服务：
 
-- `api.twitter.com` — X 官方 API（获取关注列表）
-- `api.twitterapi.io` — 第三方推文抓取服务
+- `api.twitterapi.io` — 抓取推文 + 获取关注列表（国内可直连）
 - Claude API 端点（官方或你配置的代理地址）
 
 **如果你在中国大陆**，需要确保运行环境能访问上述地址。常见方案：
@@ -126,25 +125,23 @@ pip install requests pyyaml
 
 ### 2. 获取 API 凭证
 
-你需要准备三组凭证：
+你只需要准备**两个** API Key：
 
-**a) X Official API（免费）**
-
-1. 前往 [developer.twitter.com](https://developer.twitter.com/) 创建开发者账号
-2. 创建一个 App，获取 Consumer Key 和 Consumer Secret
-3. 只需要 App-only 认证（Bearer Token），不需要用户级别 OAuth
-
-**b) twitterapi.io（按量付费）**
+**a) twitterapi.io（按量付费）**
 
 1. 前往 [twitterapi.io](https://twitterapi.io/) 注册
 2. 获取 API Key
-3. 费用：$0.15/1000 条推文
+3. 费用：$0.15/1000 条推文（获取关注列表 + 抓取推文共用）
 
-**c) Claude API（推荐）**
+**b) Claude API**
 
 1. 前往 [console.anthropic.com](https://console.anthropic.com/) 获取 API Key
 2. 或使用兼容 Anthropic API 的第三方代理服务（在 `base_url` 中配置）
 3. 也可通过环境变量 `ANTHROPIC_API_KEY` 设置
+
+**c) X Official API（可选，非必需）**
+
+如果你已有 X 开发者账号，可以填入 Consumer Key/Secret 作为获取关注列表的 fallback。不填也完全不影响使用。
 
 ### 3. 配置
 
@@ -155,11 +152,7 @@ cp config/config.yaml.example config/config.yaml
 编辑 `config/config.yaml`，填入你的凭证和用户名：
 
 ```yaml
-# 必填项
-twitter_api:
-  consumer_key: "你的 Consumer Key"
-  consumer_secret: "你的 Consumer Secret"
-
+# 必填项（只需两个 key）
 twitterapi_io:
   api_key: "你的 twitterapi.io Key"
 
@@ -261,7 +254,8 @@ python3 scripts/twitter_watchdog.py --hours-ago 8 --output-dir ./my_output
 | 文件 | 说明 |
 |------|------|
 | `ai_tweets_YYYYMMDD_HHMMSS.json` | 完整数据，含所有推文原始字段和 AI 总结文本（供周报/月报使用） |
-| `ai_tweets_YYYYMMDD_HHMMSS.md` | Markdown 详细报告，含 AI 总结 + 每条推文详情 |
+| `ai_tweets_YYYYMMDD_HHMMSS.md` | Markdown 详细报告，含分类 AI 总结 + 推文配图 + 每条推文详情 |
+| `images/YYYYMMDD_HHMMSS/` | 报告中推文的配图（每条推文最多 1 张，自动下载） |
 | `latest_summary.md` | 汇总摘要，每次覆盖更新，适合快速查看 |
 
 ### 周报 / 月报

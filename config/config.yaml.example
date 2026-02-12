@@ -1,11 +1,13 @@
 # Twitter Watchdog 配置文件
 # 架构：X 官方 API 获取关注列表 + twitterapi.io 抓取推文 + Claude AI 智能筛选总结
 
-# X 官方 API 凭证（仅用于获取关注列表，免费）
+# X 官方 API 凭证（可选，作为获取关注列表的 fallback）
+# 现在 twitterapi.io 也能获取关注列表，所以此项非必填
+# 如果配置了，会在 twitterapi.io 失败时作为备选
 # 申请地址：https://developer.twitter.com/
 twitter_api:
-  consumer_key: "YOUR_CONSUMER_KEY"
-  consumer_secret: "YOUR_CONSUMER_SECRET"
+  consumer_key: ""                       # 留空表示不使用
+  consumer_secret: ""
 
 # twitterapi.io 凭证（用于抓取推文，$0.15/1k tweets）
 # 申请地址：https://twitterapi.io/

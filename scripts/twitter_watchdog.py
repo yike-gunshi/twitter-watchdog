@@ -71,19 +71,27 @@ class TwitterWatchdog:
         self.advanced_config = self.config.get("advanced", {})
 
         if not report_only:
-            # X 官方 API 凭证（仅用于获取关注列表）
+            # twitterapi.io 凭证（用于抓取推文 + 获取关注列表）
+            self.twitterapi_io_key = self.config.get("twitterapi_io", {}).get("api_key", "")
+
+            # X 官方 API 凭证（可选，作为获取关注列表的 fallback）
             api_config = self.config.get("twitter_api", {})
             self.consumer_key = api_config.get("consumer_key", "")
             self.consumer_secret = api_config.get("consumer_secret", "")
 
-            # twitterapi.io 凭证（用于抓取推文）
-            self.twitterapi_io_key = self.config.get("twitterapi_io", {}).get("api_key", "")
-
-            # 生成 X 官方 Bearer Token
-            self.bearer_token = self._generate_bearer_token()
+            # 仅在配置了 X 官方凭证时生成 Bearer Token
+            self.bearer_token = None
+            if self.consumer_key and self.consumer_secret:
+                try:
+                    self.bearer_token = self._generate_bearer_token()
+                except Exception as e:
+                    print(f"  X 官方 API 不可用（{e}），将使用 twitterapi.io 获取关注列表")
 
             self.timeout = self.advanced_config.get("timeout_seconds", 30)
             self.state = self.load_state()
+
+            # 推文图片 URL 映射: tweet_url -> image_url
+            self.tweet_images = {}
 
     def apply_cli_overrides(self, args):
         """将 CLI 参数覆盖到 config"""
@@ -208,26 +216,83 @@ class TwitterWatchdog:
     def mark_tweet_seen(self, tweet_id):
         self.state["seen_tweets"].add(self.get_tweet_hash(tweet_id))
 
-    # ── X 官方 API（仅获取关注列表）──────────────────────
+    # ── 获取关注列表 ─────────────────────────────────────
 
-    def _x_api_get(self, url, params=None):
-        """X 官方 API 请求"""
+    def _get_followings_twitterapiio(self):
+        """通过 twitterapi.io 获取关注列表（无需 X 开发者账号、无需 VPN）"""
+        username = self.twitter_config["username"]
+        print(f"  从 twitterapi.io 获取 @{username} 的关注列表...")
+        max_followings = self.advanced_config.get("max_followings", 0)
+        all_followings = []
+        cursor = ""
+        page = 0
+        while True:
+            page += 1
+            params = {"userName": username, "pageSize": 200}
+            if cursor:
+                params["cursor"] = cursor
+            data = self._twitterapiio_get("user/followings", params)
+            batch = data.get("followings", [])
+            # 统一字段名为与 X 官方 API 兼容的格式
+            for u in batch:
+                u.setdefault("username", u.get("userName") or u.get("screen_name", ""))
+                u.setdefault("name", u.get("name", u.get("username", "")))
+                u.setdefault("description", u.get("description", ""))
+                u.setdefault("public_metrics", {
+                    "followers_count": u.get("followers_count", u.get("followers", 0))
+                })
+            all_followings.extend(batch)
+            print(f"  第 {page} 页: +{len(batch)} (共 {len(all_followings)})")
+            if max_followings > 0 and len(all_followings) >= max_followings:
+                all_followings = all_followings[:max_followings]
+                break
+            if not data.get("has_next_page") or not data.get("next_cursor"):
+                break
+            cursor = data["next_cursor"]
+        return all_followings
+
+    def _get_followings_x_api(self):
+        """通过 X 官方 API 获取关注列表（需要开发者账号 + 可能需要 VPN）"""
+        username = self.twitter_config["username"]
+        print(f"  从 X 官方 API 获取 @{username} 的关注列表...")
         headers = {"Authorization": f"Bearer {self.bearer_token}"}
         retry = self.advanced_config.get("retry_attempts", 3)
-        for attempt in range(retry):
-            resp = requests.get(url, headers=headers, params=params, timeout=self.timeout)
-            if resp.status_code == 429:
-                reset = int(resp.headers.get("x-rate-limit-reset", 0))
-                wait = max(reset - int(time.time()), 10)
-                print(f"  X API 速率限制，等待 {wait}s...")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        raise Exception("X API 请求失败")
+
+        def x_api_get(url, params=None):
+            for attempt in range(retry):
+                resp = requests.get(url, headers=headers, params=params, timeout=self.timeout)
+                if resp.status_code == 429:
+                    reset = int(resp.headers.get("x-rate-limit-reset", 0))
+                    wait = max(reset - int(time.time()), 10)
+                    print(f"  X API 速率限制，等待 {wait}s...")
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            raise Exception("X API 请求失败")
+
+        user_data = x_api_get(f"https://api.twitter.com/2/users/by/username/{username}")
+        user_id = user_data["data"]["id"]
+
+        max_followings = self.advanced_config.get("max_followings", 0)
+        all_followings = []
+        pagination_token = None
+        while True:
+            params = {"max_results": 1000, "user.fields": "username,name,description,public_metrics"}
+            if pagination_token:
+                params["pagination_token"] = pagination_token
+            data = x_api_get(f"https://api.twitter.com/2/users/{user_id}/following", params)
+            all_followings.extend(data.get("data", []))
+            if max_followings > 0 and len(all_followings) >= max_followings:
+                all_followings = all_followings[:max_followings]
+                break
+            pagination_token = data.get("meta", {}).get("next_token")
+            if not pagination_token:
+                break
+        return all_followings
 
     def get_following(self):
-        """获取关注列表（带24小时本地缓存，减少 X API 调用）"""
+        """获取关注列表（带缓存，优先 twitterapi.io，X 官方 API 作为 fallback）"""
         cache_hours = self.advanced_config.get("followings_cache_hours", 24)
         cached_time = self.state.get("followings_updated")
         cached_data = self.state.get("followings_cache")
@@ -241,45 +306,31 @@ class TwitterWatchdog:
             except (ValueError, TypeError):
                 pass
 
-        username = self.twitter_config["username"]
-        print(f"  从 X API 获取 @{username} 的关注列表...")
+        # 优先使用 twitterapi.io（无需 VPN、无需 X 开发者账号）
+        all_followings = None
+        if self.twitterapi_io_key:
+            try:
+                all_followings = self._get_followings_twitterapiio()
+            except Exception as e:
+                print(f"  twitterapi.io 关注列表获取失败: {e}")
 
-        user_data = self._x_api_get(
-            f"https://api.twitter.com/2/users/by/username/{username}"
-        )
-        user_id = user_data["data"]["id"]
+        # Fallback: X 官方 API
+        if all_followings is None and self.bearer_token:
+            try:
+                all_followings = self._get_followings_x_api()
+            except Exception as e:
+                print(f"  X 官方 API 获取关注列表失败: {e}")
 
-        max_followings = self.advanced_config.get("max_followings", 0)
-        all_followings = []
-        pagination_token = None
-
-        while True:
-            params = {
-                "max_results": 1000,
-                "user.fields": "username,name,description,public_metrics",
-            }
-            if pagination_token:
-                params["pagination_token"] = pagination_token
-
-            data = self._x_api_get(
-                f"https://api.twitter.com/2/users/{user_id}/following", params
-            )
-            all_followings.extend(data.get("data", []))
-
-            if max_followings > 0 and len(all_followings) >= max_followings:
-                all_followings = all_followings[:max_followings]
-                break
-
-            pagination_token = data.get("meta", {}).get("next_token")
-            if not pagination_token:
-                break
+        if all_followings is None:
+            print("  错误: 无法获取关注列表")
+            return []
 
         self.state["followings_cache"] = all_followings
         self.state["followings_updated"] = self.now().isoformat()
 
         exclude = set(self.twitter_config.get("exclude_users", []))
         if exclude:
-            all_followings = [u for u in all_followings if u["username"] not in exclude]
+            all_followings = [u for u in all_followings if u.get("username", "") not in exclude]
             print(f"  排除 {len(exclude)} 个用户后剩余 {len(all_followings)} 人")
 
         return all_followings
@@ -321,6 +372,80 @@ class TwitterWatchdog:
 
         max_tweets = self.twitter_config.get("tweets_per_user", 20)
         return filtered[:max_tweets]
+
+    @staticmethod
+    def extract_media_url(tweet):
+        """从推文中提取第一张图片 URL"""
+        media_list = tweet.get("extendedEntities", {}).get("media", [])
+        if not media_list:
+            media_list = tweet.get("entities", {}).get("media", [])
+        if not media_list:
+            media_list = tweet.get("media", [])
+        for m in media_list:
+            url = m.get("media_url_https") or m.get("media_url") or m.get("url", "")
+            if url and any(ext in url for ext in [".jpg", ".png", ".jpeg", ".gif", ".webp"]):
+                return url
+        return None
+
+    def collect_tweet_image(self, tweet):
+        """收集推文的图片 URL 到 self.tweet_images"""
+        tweet_url = tweet.get("url", "")
+        if not tweet_url:
+            return
+        img = self.extract_media_url(tweet)
+        if not img:
+            # 引用推文的图片
+            quoted = tweet.get("quoted_tweet") or tweet.get("quotedTweet")
+            if quoted:
+                img = self.extract_media_url(quoted)
+        if img:
+            self.tweet_images[tweet_url] = img
+
+    def download_report_images(self, summary_text, output_path):
+        """下载报告中出现的推文图片，返回 tweet_url -> relative_path 映射"""
+        if not summary_text or not self.tweet_images:
+            return {}
+        # 解析报告中所有推文 URL
+        report_urls = re.findall(r'\(https://x\.com/[^)]+\)', summary_text)
+        report_urls = [u.strip('()') for u in report_urls]
+        urls_to_download = {u: self.tweet_images[u] for u in report_urls if u in self.tweet_images}
+        if not urls_to_download:
+            return {}
+
+        ts = self.now().strftime("%Y%m%d_%H%M%S")
+        img_dir = output_path / "images" / ts
+        img_dir.mkdir(parents=True, exist_ok=True)
+        downloaded = {}
+        for tweet_url, img_url in urls_to_download.items():
+            try:
+                r = requests.get(img_url, timeout=15)
+                r.raise_for_status()
+                tid = tweet_url.rstrip("/").split("/")[-1]
+                ext = ".png" if ".png" in img_url else ".gif" if ".gif" in img_url else ".jpg"
+                fname = f"{tid}{ext}"
+                with open(img_dir / fname, "wb") as f:
+                    f.write(r.content)
+                downloaded[tweet_url] = f"images/{ts}/{fname}"
+            except Exception:
+                pass
+        if downloaded:
+            print(f"  下载图片: {len(downloaded)}/{len(urls_to_download)}")
+        return downloaded
+
+    @staticmethod
+    def insert_images_into_summary(summary_text, downloaded):
+        """在报告中每条推文后插入图片引用"""
+        if not downloaded:
+            return summary_text
+        lines = summary_text.split("\n")
+        new_lines = []
+        for line in lines:
+            new_lines.append(line)
+            for tweet_url, img_path in downloaded.items():
+                if f"]({tweet_url})" in line:
+                    new_lines.append(f"\n  ![tweet]({img_path})\n")
+                    break
+        return "\n".join(new_lines)
 
     # ── 全网热门 AI 搜索 ───────────────────────────────────
 
@@ -447,29 +572,62 @@ class TwitterWatchdog:
         if self.hours_ago:
             window_desc = f"（本次覆盖最近 {self.hours_ago} 小时）"
 
+        # 分类结构化 prompt（日报/ai_filter/非 ai_filter 共用）
+        category_block = """输出结构（严格遵循）：
+
+## 本期要点
+
+用 3~5 个 bullet point 概括最重要的事件/发布/趋势，每条一句话，不带链接。
+
+## AI 产品与工具
+
+新产品发布、产品重大更新、工具推荐等。
+
+## AI 模型与技术
+
+新模型发布、模型评测、技术架构、算法突破等。
+
+## AI 开发者生态
+
+开发框架、API、SDK、开源项目、开发者工具链等。
+
+## AI 行业动态
+
+公司战略、融资收购、人事变动、政策法规、行业合作等。
+
+## AI 研究与观点
+
+学术论文、实验结果、行业观察、趋势分析等。
+
+每个分类下的条目格式：
+- [具体标题](推文URL)。陈述句描述，信息密度高。
+
+示例：
+- [Anthropic 发布 Claude Opus 4.5 安全风险报告](https://x.com/AnthropicAI/status/123)。Anthropic 因其下一代模型接近 AI Safety Level 4 阈值（即具备自主 AI 研发能力），主动发布评估报告，承诺为所有未来模型撰写破坏性风险报告，这是首家为单个模型发布此类文件的 AI 公司。"""
+
+        rules_block = """规则：
+- 标题具体精炼，描述用一到两个自然陈述句，把关键信息串在一起
+- 有数据就写数据（用户量、价格、性能指标、Star 数等）
+- 如果是工具或产品：写明怎么获取、有什么独特优势
+- 如果是研究或报告：写明主要发现和实际意义
+- 如果推文引用/转发了其他内容，描述原始内容
+- 多条推文讲同一件事时合并为一条，综合所有信息源
+- 每个分类内按重要性从高到低排列
+- 如果某个分类下没有内容，省略该分类
+- 不加前言或结尾总结段落"""
+
         if ai_filter:
             prompt = f"""你是一个 AI 行业信息整理员。以下是从 Twitter 抓取的推文列表{window_desc}。
 
 任务：
 1. 从所有推文中筛选出与 AI 领域、AI 工具、AI 行业相关的推文
-2. 将筛选出的推文整理为信息清单
+2. 生成结构化的分类日报
 
-输出格式（严格遵循）：
-每条为一个列表项，标题本身就是链接，后跟客观描述：
+读者画像：关注 AI 前沿动态的从业者。他们想从每条新闻中快速了解：发生了什么、谁发布的、核心内容（功能/指标/数据/价格）、怎么获取或有什么意义。
 
-- [具体标题](推文URL)。客观描述。
+{category_block}
 
-示例：
-- [Claude Code 新增 /insights 命令](https://x.com/xxx/status/123)。分析过去一个月的历史记录、项目情况和使用习惯，给出工作流优化建议。
-- [Mistral AI 发布 Voxtral Transcribe 2](https://x.com/xxx/status/456)。包括批量转录 V2 和实时 Realtime 两个版本，V2 支持 13 种语言、说话人识别和词级时间戳，Realtime 延迟低于 200ms。
-
-规则：
-- 标题要具体精炼：说清是什么工具/产品/事件，不加多余修饰
-- 描述包含关键数据、核心功能、具体特点，去除空泛表述和重复修饰
-- 如果推文引用/转发了其他内容，描述原始内容
-- 多条推文讲同一件事时，合并为一条，综合所有信息
-- 按信息价值排序，输出扁平列表，不分类分组
-- 不加总结段落或结尾语
+{rules_block}
 
 最后，输出你筛选出的所有 AI 相关推文的 ID 列表（JSON 格式）：
 ```json
@@ -481,21 +639,13 @@ class TwitterWatchdog:
         else:
             prompt = f"""你是一个 AI 行业信息整理员。以下是从 Twitter 抓取的 AI 相关推文{window_desc}。
 
-将推文整理为信息清单，输出格式：
+任务：生成结构化的分类日报。
 
-- [具体标题](推文URL)。客观描述。
+读者画像：关注 AI 前沿动态的从业者。他们想从每条新闻中快速了解：发生了什么、谁发布的、核心内容（功能/指标/数据/价格）、怎么获取或有什么意义。
 
-示例：
-- [Claude Code 新增 /insights 命令](https://x.com/xxx/status/123)。分析过去一个月的历史记录、项目情况和使用习惯，给出工作流优化建议。
-- [Mistral AI 发布 Voxtral Transcribe 2](https://x.com/xxx/status/456)。包括批量转录 V2 和实时 Realtime 两个版本，V2 支持 13 种语言、说话人识别和词级时间戳，Realtime 延迟低于 200ms。
+{category_block}
 
-规则：
-- 标题要具体精炼：说清是什么工具/产品/事件，不加多余修饰
-- 描述包含关键数据、核心功能、具体特点，去除空泛表述和重复修饰
-- 如果推文引用/转发了其他内容，描述原始内容
-- 多条推文讲同一件事时，合并为一条，综合所有信息
-- 按信息价值排序，输出扁平列表，不分类分组
-- 不加总结段落或结尾语
+{rules_block}
 
 ---
 {all_content}"""
@@ -616,6 +766,7 @@ class TwitterWatchdog:
                     if passed:
                         filtered_tweets.append(tweet)
                         self.mark_tweet_seen(tweet_id)
+                        self.collect_tweet_image(tweet)
                         new_tweets_count += 1
 
                 label = "条" if ai_filter else "条 AI 相关"
@@ -642,6 +793,8 @@ class TwitterWatchdog:
                     t for t in trending_tweets
                     if t.get("id") not in seen_ids and self.is_tweet_in_window(t)
                 ]
+                for t in trending_tweets:
+                    self.collect_tweet_image(t)
                 print(f"  找到 {len(trending_tweets)} 条热门 AI 推文")
             except Exception as e:
                 print(f"  搜索失败: {e}")
@@ -701,12 +854,19 @@ class TwitterWatchdog:
         output_path = Path(self.output_config["directory"])
         timestamp = self.now().strftime("%Y%m%d_%H%M%S")
 
+        # 下载报告中推文的图片并插入到 AI 总结中
+        ai_summary_with_images = ai_summary
+        if ai_summary:
+            downloaded = self.download_report_images(ai_summary, output_path)
+            if downloaded:
+                ai_summary_with_images = self.insert_images_into_summary(ai_summary, downloaded)
+
         if "json" in self.output_config.get("formats", ["json"]):
             json_file = output_path / f"ai_tweets_{timestamp}.json"
             json_data = {
                 "followings": data,
                 "trending": trending_tweets,
-                "ai_summary": ai_summary,
+                "ai_summary": ai_summary,  # JSON 保存不含图片的原始总结
             }
             with open(json_file, "w", encoding="utf-8") as f:
                 json.dump(json_data, f, ensure_ascii=False, indent=2, default=str)
@@ -714,7 +874,7 @@ class TwitterWatchdog:
 
         if "markdown" in self.output_config.get("formats", ["markdown"]):
             md_file = output_path / f"ai_tweets_{timestamp}.md"
-            self.save_as_markdown(data, trending_tweets, md_file, source_username, stats, ai_summary)
+            self.save_as_markdown(data, trending_tweets, md_file, source_username, stats, ai_summary_with_images)
             print(f"  Markdown: {md_file}")
 
         if self.output_config.get("create_summary", False):
