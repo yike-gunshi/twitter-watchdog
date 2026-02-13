@@ -21,6 +21,11 @@ twitter:
   tweets_per_user: 20                  # 每个用户最多保留的推文数量
   exclude_replies: true                # 排除回复
   exclude_retweets: true               # 排除转推
+  custom_accounts: []                  # 额外关注的账号（不在关注列表中也能抓取）
+  # custom_accounts:
+  #   - "AnthropicAI"
+  #   - "OpenAI"
+  #   - "GoogleDeepMind"
 
 # 输出设置
 # 三层架构输出：output/raw/ → output/analysis/ → output/reports/
@@ -66,6 +71,8 @@ filters:
 ai_summary:
   enabled: true
   ai_filter: true                      # 由 Claude 判断推文是否与 AI 相关（替代关键词匹配）
+  style: "standard"                    # 报告风格: concise(一句话) / standard(默认) / advanced(含分析)
+  custom_prompt: ""                    # 自定义指令（追加到 AI prompt 末尾，如"重点关注 Agent 和 MCP 方向"）
   base_url: ""                         # API 代理地址（留空则用官方 https://api.anthropic.com）
   api_key: ""                          # Anthropic API Key（也可通过环境变量 ANTHROPIC_API_KEY 设置）
   model: "claude-sonnet-4-5-20250929"  # 模型选择（sonnet 性价比高）
@@ -77,6 +84,14 @@ trending_search:
   query: "(AI OR LLM OR GPT OR Claude OR OpenAI OR AGI OR 大模型) min_faves:50 -is:retweet -is:reply"
   min_views: 2000                      # 最少浏览量（按浏览量筛选）
   max_tweets: 20                       # 最多返回条数
+
+# 推送设置（Telegram Bot）
+push:
+  enabled: false                       # 是否启用推送
+  telegram:
+    bot_token: ""                      # Telegram Bot Token（从 @BotFather 获取）
+    chat_id: ""                        # 接收消息的 Chat ID（从 @userinfobot 获取）
+  # 推送内容：报告的"本期要点"部分 + 突发推文即时推送
 
 # 通知设置（macOS）
 notifications:

@@ -549,6 +549,92 @@ class TwitterWatchdog:
 
     # ── Claude AI 总结 + 智能筛选 ──────────────────────────
 
+    def _build_style_prompts(self, style="standard", custom_prompt=""):
+        """根据 style 配置生成 category_block 和 rules_block"""
+        # 分类结构（所有 style 共用）
+        categories = """## 本期要点
+
+用 3~5 个 bullet point 概括最重要的事件/发布/趋势，每条一句话，不带链接。
+
+## AI 产品与工具
+
+新产品发布、产品重大更新、工具推荐等。
+
+## AI 模型与技术
+
+新模型发布、模型评测、技术架构、算法突破等。
+
+## AI 开发者生态
+
+开发框架、API、SDK、开源项目、开发者工具链等。
+
+## AI 行业动态
+
+公司战略、融资收购、人事变动、政策法规、行业合作等。
+
+## AI 研究与观点
+
+学术论文、实验结果、行业观察、趋势分析等。"""
+
+        if style == "concise":
+            item_format = """每个分类下的条目格式：
+- [具体标题](推文URL)。一句话核心事实。
+
+示例：
+- [OpenAI 发布 GPT-5](https://x.com/OpenAI/status/123)。原生多模态推理，性能全面超越 GPT-4o。"""
+            rules = """规则：
+- 每条只用一句话，不超过 30 字，只保留最核心的事实
+- 有数据就写数据（用户量、价格、性能指标等）
+- 多条推文讲同一件事时合并为一条
+- 每个分类内按重要性从高到低排列
+- 如果某个分类下没有内容，省略该分类
+- 不加前言或结尾总结段落"""
+
+        elif style == "advanced":
+            item_format = """每个分类下的条目格式：
+- [具体标题](推文URL)。陈述句描述，信息密度高。
+  **为什么重要**：分析这条信息对 AI 行业/开发者/用户的影响和意义。
+
+示例：
+- [Anthropic 发布 Claude Opus 4.5 安全风险报告](https://x.com/AnthropicAI/status/123)。Anthropic 因其下一代模型接近 AI Safety Level 4 阈值（即具备自主 AI 研发能力），主动发布评估报告。
+  **为什么重要**：这是首家为单个模型发布破坏性风险报告的 AI 公司，可能推动行业建立类似的安全评估标准，对 AI 安全监管走向有风向标意义。"""
+            rules = """规则：
+- 标题具体精炼，描述用一到两个自然陈述句
+- 每条必须附带"为什么重要"分析（1-2 句话，聚焦实际影响）
+- 有数据就写数据（用户量、价格、性能指标、Star 数等）
+- 如果是工具或产品：写明怎么获取、有什么独特优势
+- 如果是研究或报告：写明主要发现和实际意义
+- 多条推文讲同一件事时合并为一条，综合所有信息源
+- 每个分类内按重要性从高到低排列
+- 如果某个分类下没有内容，省略该分类
+- 不加前言或结尾总结段落"""
+
+        else:  # standard（默认，与原有行为一致）
+            item_format = """每个分类下的条目格式：
+- [具体标题](推文URL)。陈述句描述，信息密度高。
+
+示例：
+- [Anthropic 发布 Claude Opus 4.5 安全风险报告](https://x.com/AnthropicAI/status/123)。Anthropic 因其下一代模型接近 AI Safety Level 4 阈值（即具备自主 AI 研发能力），主动发布评估报告，承诺为所有未来模型撰写破坏性风险报告，这是首家为单个模型发布此类文件的 AI 公司。"""
+            rules = """规则：
+- 标题具体精炼，描述用一到两个自然陈述句，把关键信息串在一起
+- 有数据就写数据（用户量、价格、性能指标、Star 数等）
+- 如果是工具或产品：写明怎么获取、有什么独特优势
+- 如果是研究或报告：写明主要发现和实际意义
+- 如果推文引用/转发了其他内容，描述原始内容
+- 多条推文讲同一件事时合并为一条，综合所有信息源
+- 每个分类内按重要性从高到低排列
+- 如果某个分类下没有内容，省略该分类
+- 不加前言或结尾总结段落"""
+
+        category_block = f"输出结构（严格遵循）：\n\n{categories}\n\n{item_format}"
+        rules_block = rules
+
+        # 追加用户自定义 prompt
+        if custom_prompt:
+            rules_block += f"\n\n用户特别要求：\n{custom_prompt}"
+
+        return category_block, rules_block
+
     def generate_ai_summary(self, followings_data, trending_tweets):
         """调用 Claude API 生成智能总结，可选同时进行 AI 相关性判断
 
@@ -575,6 +661,8 @@ class TwitterWatchdog:
         )
 
         ai_filter = summary_config.get("ai_filter", False)
+        style = summary_config.get("style", "standard")
+        custom_prompt = summary_config.get("custom_prompt", "")
 
         # 构建推文内容
         content_parts = self._build_tweet_lines(followings_data, trending_tweets, with_id=ai_filter)
@@ -584,49 +672,8 @@ class TwitterWatchdog:
         if self.hours_ago:
             window_desc = f"（本次覆盖最近 {self.hours_ago} 小时）"
 
-        # 分类结构化 prompt（日报/ai_filter/非 ai_filter 共用）
-        category_block = """输出结构（严格遵循）：
-
-## 本期要点
-
-用 3~5 个 bullet point 概括最重要的事件/发布/趋势，每条一句话，不带链接。
-
-## AI 产品与工具
-
-新产品发布、产品重大更新、工具推荐等。
-
-## AI 模型与技术
-
-新模型发布、模型评测、技术架构、算法突破等。
-
-## AI 开发者生态
-
-开发框架、API、SDK、开源项目、开发者工具链等。
-
-## AI 行业动态
-
-公司战略、融资收购、人事变动、政策法规、行业合作等。
-
-## AI 研究与观点
-
-学术论文、实验结果、行业观察、趋势分析等。
-
-每个分类下的条目格式：
-- [具体标题](推文URL)。陈述句描述，信息密度高。
-
-示例：
-- [Anthropic 发布 Claude Opus 4.5 安全风险报告](https://x.com/AnthropicAI/status/123)。Anthropic 因其下一代模型接近 AI Safety Level 4 阈值（即具备自主 AI 研发能力），主动发布评估报告，承诺为所有未来模型撰写破坏性风险报告，这是首家为单个模型发布此类文件的 AI 公司。"""
-
-        rules_block = """规则：
-- 标题具体精炼，描述用一到两个自然陈述句，把关键信息串在一起
-- 有数据就写数据（用户量、价格、性能指标、Star 数等）
-- 如果是工具或产品：写明怎么获取、有什么独特优势
-- 如果是研究或报告：写明主要发现和实际意义
-- 如果推文引用/转发了其他内容，描述原始内容
-- 多条推文讲同一件事时合并为一条，综合所有信息源
-- 每个分类内按重要性从高到低排列
-- 如果某个分类下没有内容，省略该分类
-- 不加前言或结尾总结段落"""
+        # 根据 style 生成 prompt
+        category_block, rules_block = self._build_style_prompts(style, custom_prompt)
 
         model = summary_config.get("model", "claude-sonnet-4-5-20250929")
         max_tokens = summary_config.get("max_tokens", 4096)
@@ -716,6 +763,23 @@ class TwitterWatchdog:
             id_data = json.loads(json_match.group(1))
         return set(str(i) for i in id_data.get("ai_tweet_ids", []))
 
+    @staticmethod
+    def _parse_urgent_ids(response_text):
+        """从 Claude 响应中提取紧急推文 ID 集合"""
+        try:
+            json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
+            if json_match:
+                id_data = json.loads(json_match.group(1))
+            else:
+                json_match = re.search(r'\{[^}]*"urgent_ids"[^}]*\}', response_text, re.DOTALL)
+                if json_match:
+                    id_data = json.loads(json_match.group(0))
+                else:
+                    return set()
+            return set(str(i) for i in id_data.get("urgent_ids", []))
+        except (json.JSONDecodeError, AttributeError):
+            return set()
+
     def _build_tweet_lines(self, followings_data, trending_tweets, with_id=False):
         """构建推文文本行列表，返回 list of str"""
         lines = []
@@ -765,6 +829,7 @@ class TwitterWatchdog:
         total_batches = len(batches)
 
         ai_tweet_ids = set()
+        urgent_ids = set()
         total_input = 0
         total_output = 0
 
@@ -774,16 +839,19 @@ class TwitterWatchdog:
         for bi, batch in enumerate(batches, 1):
             if total_batches > 1:
                 print(f"    批次 {bi}/{total_batches}...", end=" ", flush=True)
-            ids, inp, out = self._filter_batch_robust(
+            ids, urg, inp, out = self._filter_batch_robust(
                 batch, window_desc, model, max_tokens, api_url, headers
             )
             total_input += inp
             total_output += out
             ai_tweet_ids.update(ids)
+            urgent_ids.update(urg)
             if total_batches > 1:
                 print(f"{len(ids)} 条")
 
-        print(f"  筛选完成（{total_input} + {total_output} tokens）→ {len(ai_tweet_ids)} 条 AI 相关")
+        urgent_label = f"（🔴 {len(urgent_ids)} 条突发）" if urgent_ids else ""
+        print(f"  筛选完成（{total_input} + {total_output} tokens）→ {len(ai_tweet_ids)} 条 AI 相关{urgent_label}")
+        self._urgent_ids = urgent_ids  # 保存供后续推送使用
 
         if not ai_tweet_ids:
             print("  警告: 未识别出 AI 推文，保留所有推文")
@@ -804,12 +872,16 @@ class TwitterWatchdog:
         batch_content = "\n".join(lines)
         filter_prompt = f"""你是一个 AI 行业信息筛选员。以下是从 Twitter 抓取的推文列表{window_desc}。
 
-任务：从中找出所有与 AI 领域相关的推文（包括 AI 产品、模型、开发工具、行业动态、研究等）。
+任务：
+1. 从中找出所有与 AI 领域相关的推文（包括 AI 产品、模型、开发工具、行业动态、研究等）。
+2. 在 AI 相关推文中，标出紧急程度为"突发"的推文（重大产品发布、重大收购、安全事件等需要立即关注的）。
 
 只输出 JSON，不要输出其他内容：
 ```json
-{{"ai_tweet_ids": ["id1", "id2", ...]}}
+{{"ai_tweet_ids": ["id1", "id2", ...], "urgent_ids": ["id3", ...]}}
 ```
+
+urgent_ids 必须是 ai_tweet_ids 的子集，只包含真正重大的突发事件（每批通常 0-2 条）。
 
 ---
 {batch_content}"""
@@ -817,21 +889,22 @@ class TwitterWatchdog:
             resp_text, usage = self._call_claude_api(
                 filter_prompt, model, max_tokens, api_url, headers)
             ids = self._parse_ai_tweet_ids(resp_text) or set()
-            return ids, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+            urgent = self._parse_urgent_ids(resp_text) or set()
+            return ids, urgent, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
         except Exception as e:
             # 行数太少无法继续拆分
             if len(lines) <= 10:
                 indent = "  " * (depth + 2)
                 print(f"\n    {indent}✗ 子批次仍失败且无法继续拆分（{len(lines)} 行）: {type(e).__name__}")
-                return set(), 0, 0
+                return set(), set(), 0, 0
             mid = len(lines) // 2
             indent = "  " * (depth + 2)
             print(f"\n    {indent}↳ 拆分为 2 个子批次重试（各 ~{mid} 行）...", end=" ", flush=True)
-            ids1, in1, out1 = self._filter_batch_robust(
+            ids1, urg1, in1, out1 = self._filter_batch_robust(
                 lines[:mid], window_desc, model, max_tokens, api_url, headers, depth + 1)
-            ids2, in2, out2 = self._filter_batch_robust(
+            ids2, urg2, in2, out2 = self._filter_batch_robust(
                 lines[mid:], window_desc, model, max_tokens, api_url, headers, depth + 1)
-            return ids1 | ids2, in1 + in2, out1 + out2
+            return ids1 | ids2, urg1 | urg2, in1 + in2, out1 + out2
 
     def _build_filtered_lines(self, followings_data, trending_tweets, ai_tweet_ids):
         """根据 AI 推文 ID 构建筛选后的内容行"""
@@ -1057,10 +1130,28 @@ class TwitterWatchdog:
             print(f"分页深度: 最近 {self.hours_ago} 小时")
         print()
 
-        # 步骤1: 获取关注列表
+        # 步骤1: 获取关注列表 + 自定义账号
         print("[1/3] 获取关注列表...")
         followings = self.get_following()
         print(f"  共 {len(followings)} 个关注账户")
+
+        # 合并 custom_accounts（不在关注列表中的额外账号）
+        custom_accounts = self.twitter_config.get("custom_accounts", [])
+        if custom_accounts:
+            existing_usernames = {u.get("username", "").lower() for u in followings}
+            added = 0
+            for acct in custom_accounts:
+                if acct.lower() not in existing_usernames:
+                    followings.append({
+                        "username": acct,
+                        "name": acct,
+                        "description": "",
+                        "public_metrics": {"followers_count": 0},
+                        "_custom": True,
+                    })
+                    added += 1
+            if added:
+                print(f"  + {added} 个自定义账号")
 
         # 步骤2: 抓取推文（全量，不做关键词/AI 过滤）
         print(f"\n[2/3] 抓取推文（twitterapi.io）...")
@@ -1333,6 +1424,7 @@ class TwitterWatchdog:
                 "model": self.config.get("ai_summary", {}).get("model", "claude-sonnet-4-5-20250929"),
             },
             "ai_tweet_ids": list(ai_tweet_ids) if ai_tweet_ids else [],
+            "urgent_ids": list(getattr(self, '_urgent_ids', set())),
             "summary": ai_summary,
             "filtered_followings": final_followings,
             "filtered_trending": final_trending,
@@ -1574,6 +1666,111 @@ class TwitterWatchdog:
                     self._write_tweet_md(f, tweet)
                     f.write("---\n\n")
 
+    # ── 推送 ──────────────────────────────────────────────
+
+    def _telegram_send(self, text):
+        """发送消息到 Telegram"""
+        push_config = self.config.get("push", {})
+        tg = push_config.get("telegram", {})
+        bot_token = tg.get("bot_token", "")
+        chat_id = tg.get("chat_id", "")
+        if not bot_token or not chat_id:
+            return False
+        try:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                return True
+            print(f"  Telegram 推送失败: {resp.status_code} {resp.text[:100]}")
+            return False
+        except Exception as e:
+            print(f"  Telegram 推送异常: {e}")
+            return False
+
+    def push_summary(self, source=None, test=False):
+        """推送分析摘要到 Telegram"""
+        push_config = self.config.get("push", {})
+        if not push_config.get("enabled", False) and not test:
+            return
+
+        if test:
+            ok = self._telegram_send("✅ Twitter Watchdog 推送测试成功！")
+            print(f"  Telegram 测试: {'成功' if ok else '失败'}")
+            return
+
+        # 读取 analysis 文件
+        if source:
+            source_path = Path(source)
+        else:
+            output_path = Path(self.output_config["directory"])
+            analysis_dir = output_path / "analysis"
+            if not analysis_dir.exists():
+                return
+            files = sorted(analysis_dir.glob("*.json"))
+            if not files:
+                return
+            source_path = files[-1]
+
+        with open(source_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        summary = data.get("summary", "")
+        if not summary:
+            return
+
+        # 提取"本期要点"部分
+        highlights = self._extract_highlights(summary)
+        if not highlights:
+            highlights = summary[:1000]
+
+        ts = self.now().strftime("%m/%d %H:%M")
+        msg = f"📡 *AI 新闻速递* ({ts})\n\n{highlights}"
+
+        # Telegram 消息限制 4096 字符
+        if len(msg) > 4000:
+            msg = msg[:3997] + "..."
+
+        ok = self._telegram_send(msg)
+        if ok:
+            print(f"  📤 已推送到 Telegram")
+
+    def push_urgent(self, tweets):
+        """推送突发推文到 Telegram"""
+        push_config = self.config.get("push", {})
+        if not push_config.get("enabled", False):
+            return
+        for t in tweets:
+            text = t.get("text", "")[:200]
+            url = t.get("url", "")
+            author = t.get("author", {}).get("userName", "")
+            msg = f"🔴 *突发 AI 新闻*\n\n@{author}: {text}\n\n{url}"
+            self._telegram_send(msg)
+
+    @staticmethod
+    def _extract_highlights(summary):
+        """从 summary 中提取"本期要点"部分"""
+        lines = summary.split("\n")
+        in_highlights = False
+        result = []
+        for line in lines:
+            if "本期要点" in line:
+                in_highlights = True
+                continue
+            if in_highlights:
+                if line.startswith("## "):
+                    break
+                if line.strip():
+                    result.append(line)
+        return "\n".join(result) if result else ""
+
     # ── 流水线（向后兼容）─────────────────────────────────
 
     def run_pipeline(self):
@@ -1589,6 +1786,7 @@ class TwitterWatchdog:
             return
 
         self.run_report(source=analysis_file)
+        self.push_summary(source=analysis_file)
 
     # ── 报告输出 ──────────────────────────────────────────
 
@@ -2246,6 +2444,11 @@ def main():
     sp_report.add_argument("--weekly", metavar="YYYY-MM-DD", help="生成周报（从指定日期起 7 天）")
     sp_report.add_argument("--monthly", metavar="YYYY-MM", help="生成月报")
 
+    # push
+    sp_push = subparsers.add_parser("push", help="推送摘要到 Telegram")
+    sp_push.add_argument("--source", help="指定 analysis JSON 文件路径")
+    sp_push.add_argument("--test", action="store_true", help="测试推送配置")
+
     args = parser.parse_args()
 
     # 重置状态
@@ -2284,6 +2487,13 @@ def main():
             weekly=getattr(args, "weekly", None),
             monthly=getattr(args, "monthly", None),
         )
+
+    elif args.command == "push":
+        watchdog = TwitterWatchdog(config_file=args.config, cli_args=args, report_only=True)
+        if getattr(args, "test", False):
+            watchdog.push_summary(test=True)
+        else:
+            watchdog.push_summary(source=getattr(args, "source", None))
 
     else:
         # 无子命令 → 流水线（向后兼容）

@@ -147,6 +147,68 @@ output/
 | `--weekly YYYY-MM-DD` | 生成周报（从指定日期起 7 天） |
 | `--monthly YYYY-MM` | 生成月报 |
 
+### Layer 4: 推送到 Telegram
+
+```bash
+# 推送最新分析摘要到 Telegram
+$PYTHON $SCRIPT --config $CONFIG push
+
+# 指定 analysis 文件推送
+$PYTHON $SCRIPT --config $CONFIG push --source output/analysis/20260212_143000.json
+
+# 测试推送配置（发送测试消息）
+$PYTHON $SCRIPT --config $CONFIG push --test
+```
+
+## MVP 个性化配置
+
+### 源头个性化 — custom_accounts
+
+在 `twitter.custom_accounts` 中添加额外关注的账号（不在关注列表中也能抓取）：
+
+```yaml
+twitter:
+  custom_accounts:
+    - "AnthropicAI"
+    - "OpenAI"
+    - "GoogleDeepMind"
+```
+
+### 处理个性化 — style + custom_prompt
+
+```yaml
+ai_summary:
+  style: "standard"       # concise(一句话) / standard(默认) / advanced(含分析)
+  custom_prompt: ""        # 追加到 AI prompt 末尾，如"重点关注 Agent 和 MCP 方向"
+```
+
+- **concise**: 每条推文一句话摘要（≤30字），只保留核心事实
+- **standard**: 当前默认风格（1-2 句说明）
+- **advanced**: standard + 每条增加"为什么重要"分析
+
+### 紧急度分级
+
+AI 自动将推文分为：
+- 🔴 **突发** (urgent)：重大产品发布、安全事件、行业巨变 → 即时推送到 Telegram
+- 🟡/🟢 **常规**：日常新闻，随日报推送
+
+### Telegram 推送
+
+```yaml
+push:
+  enabled: true
+  telegram:
+    bot_token: "your_bot_token"    # 从 @BotFather 获取
+    chat_id: "your_chat_id"       # 从 @userinfobot 获取
+```
+
+### push 子命令参数
+
+| 参数 | 说明 |
+|------|------|
+| `--source PATH` | 指定 analysis JSON 文件路径（默认取最新） |
+| `--test` | 测试推送配置（发送测试消息） |
+
 ## 使用提示
 
 - 日报/周报/月报基于 `output/analysis/` 中的历史数据，确保有足够的历史分析结果
