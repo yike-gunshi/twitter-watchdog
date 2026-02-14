@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "tavily-search": {
+      "version": "1.0.0",
+      "installedAt": 1770462366052
+    },
+    "find-skills": {
+      "version": "0.1.0",
+      "installedAt": 1770462376330
+    },
+    "proactive-agent-1-2-4": {
+      "version": "1.0.0",
+      "installedAt": 1770462380707
+    },
+    "ai-explain": {
+      "version": "1.0.1",
+      "installedAt": 1770772111055
+    },
+    "sw-code-reviewer": {
+      "version": "1.0.0",
+      "installedAt": 1770772119269
+    },
+    "git": {
+      "version": "1.0.0",
+      "installedAt": 1770772126397
+    },
+    "git-workflows": {
+      "version": "1.0.0",
+      "installedAt": 1770772133223
+    },
+    "test-master": {
+      "version": "0.1.0",
+      "installedAt": 1770772145640
+    },
+    "google-web-search": {
+      "version": "1.0.2",
+      "installedAt": 1770772159029
+    },
+    "intelligent-router": {
+      "version": "2.0.0",
+      "installedAt": 1770772198375
+    },
+    "sw-code-standards-detective": {
+      "version": "1.0.0",
+      "installedAt": 1770772202395
+    },
+    "sw-ui-testing": {
+      "version": "1.0.0",
+      "installedAt": 1770772206526
+    },
+    "ssl-checker": {
+      "version": "1.1.0",
+      "installedAt": 1770772213142
+    },
+    "lan-scanner": {
+      "version": "1.1.0",
+      "installedAt": 1770772217260
+    },
+    "cellcog": {
+      "version": "1.0.14",
+      "installedAt": 1770772220546
+    }
+  }
+}
