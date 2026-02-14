@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitter 月报 - {{MONTH}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #f0f3f5;
+            color: #14171a;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #ffffff;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #1da1f2 0%, #0c85d0 50%, #1da1f2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+            background-size: 200% 200%;
+            animation: gradient 15s ease infinite;
+        }
+        @keyframes gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .header h1 {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .header .subtitle {
+            font-size: 15px;
+            opacity: 0.95;
+        }
+        .header .month {
+            font-size: 24px;
+            margin-top: 15px;
+            font-weight: 600;
+        }
+        .stats-overview {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 15px;
+            padding: 30px;
+            background: #e8f5fe;
+            border-bottom: 1px solid #e1e8ed;
+        }
+        .stat-card {
+            text-align: center;
+            padding: 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+        }
+        .stat-card .icon {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #1da1f2;
+        }
+        .stat-card .label {
+            font-size: 12px;
+            color: #657786;
+            text-transform: uppercase;
+            margin-top: 8px;
+            font-weight: 500;
+        }
+        .section {
+            padding: 30px;
+            border-bottom: 1px solid #e1e8ed;
+        }
+        .section-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #14171a;
+            margin-bottom: 25px;
+            padding-bottom: 12px;
+            border-bottom: 3px solid #1da1f2;
+        }
+        .daily-chart {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(35px, 1fr));
+            gap: 8px;
+            margin-top: 20px;
+        }
+        .day-bar {
+            text-align: center;
+        }
+        .day-bar .bar {
+            height: 150px;
+            background: linear-gradient(to top, #1da1f2, #64b5f6);
+            border-radius: 4px 4px 0 0;
+            margin: 0 auto;
+            min-height: 20px;
+            transition: all 0.3s;
+            position: relative;
+        }
+        .day-bar .bar:hover {
+            background: linear-gradient(to top, #0c85d0, #42a5f5);
+            transform: scaleY(1.05);
+        }
+        .day-bar .bar::after {
+            content: attr(data-count);
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px;
+            color: #657786;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .day-bar .bar:hover::after {
+            opacity: 1;
+        }
+        .day-bar .label {
+            font-size: 11px;
+            color: #657786;
+            margin-top: 5px;
+        }
+        .top-users {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 20px;
+        }
+        .user-card {
+            padding: 15px;
+            background: linear-gradient(135deg, #f7f9fa 0%, #e8f5fe 100%);
+            border-radius: 12px;
+            text-align: center;
+            transition: transform 0.3s;
+            border: 1px solid #e1e8ed;
+        }
+        .user-card:hover {
+            transform: translateY(-5px);
+            border-color: #1da1f2;
+        }
+        .user-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #1da1f2 0%, #0c85d0 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 22px;
+            margin: 0 auto 10px;
+        }
+        .user-name {
+            font-weight: bold;
+            color: #14171a;
+            font-size: 15px;
+            margin-bottom: 8px;
+        }
+        .user-stats {
+            display: flex;
+            justify-content: space-around;
+            font-size: 12px;
+            color: #657786;
+        }
+        .user-stat-item {
+            text-align: center;
+        }
+        .user-stat-item strong {
+            display: block;
+            color: #1da1f2;
+            font-size: 16px;
+        }
+        .hashtags-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .hashtag-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 15px;
+            background: linear-gradient(90deg, #e8f5fe 0%, #f7f9fa 100%);
+            border-radius: 8px;
+            border-left: 4px solid #1da1f2;
+        }
+        .hashtag-name {
+            flex: 1;
+            font-weight: 500;
+            color: #14171a;
+            font-size: 15px;
+        }
+        .hashtag-stats {
+            display: flex;
+            gap: 15px;
+            font-size: 13px;
+            color: #657786;
+        }
+        .hashtag-stats strong {
+            color: #1da1f2;
+        }
+        .daily-reports {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 12px;
+        }
+        .daily-link {
+            padding: 12px;
+            background: #f7f9fa;
+            border-radius: 8px;
+            text-align: center;
+            text-decoration: none;
+            color: #14171a;
+            transition: all 0.3s;
+            border: 1px solid #e1e8ed;
+        }
+        .daily-link:hover {
+            background: #e8f5fe;
+            border-color: #1da1f2;
+            transform: translateY(-3px);
+        }
+        .daily-link .date {
+            font-weight: bold;
+            font-size: 13px;
+            color: #1da1f2;
+        }
+        .daily-link .count {
+            font-size: 11px;
+            color: #657786;
+            margin-top: 5px;
+        }
+        .insights {
+            background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 4px solid #ffc107;
+        }
+        .insight-item {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+        .insight-item:last-child {
+            border-bottom: none;
+        }
+        .insight-item strong {
+            color: #ff6f00;
+        }
+        .footer {
+            padding: 30px;
+            text-align: center;
+            background: #f7f9fa;
+            color: #657786;
+            font-size: 13px;
+            border-top: 1px solid #e1e8ed;
+        }
+        .footer a {
+            color: #1da1f2;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+        .no-data {
+            padding: 50px;
+            text-align: center;
+            color: #657786;
+        }
+        @media (max-width: 768px) {
+            .stats-overview {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .top-users {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .daily-chart {
+                grid-template-columns: repeat(7, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Twitter 月报</h1>
+            <div class="month">{{MONTH}}</div>
+            <div class="subtitle">数据统计周期: {{START_DATE}} 至 {{END_DATE}} | 生成时间: {{GENERATED_AT}}</div>
+        </div>
+
+        <div class="stats-overview">
+            <div class="stat-card">
+                <div class="icon">📊</div>
+                <div class="value">{{TOTAL_TWEETS}}</div>
+                <div class="label">总推文数</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">👥</div>
+                <div class="value">{{TOTAL_USERS}}</div>
+                <div class="label">活跃用户</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">🔄</div>
+                <div class="value">{{TOTAL_RETWEETS}}</div>
+                <div class="label">转推数</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">💬</div>
+                <div class="value">{{TOTAL_REPLIES}}</div>
+                <div class="label">回复数</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">#️⃣</div>
+                <div class="value">{{TOTAL_HASHTAGS}}</div>
+                <div class="label">话题数</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">📅</div>
+                <div class="value">{{DAYS_ACTIVE}}</div>
+                <div class="label">活跃天数</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">每日推文趋势</div>
+            <div class="daily-chart">
+                {{DAILY_CHART}}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">月度最活跃用户</div>
+            <div class="top-users">
+                {{TOP_USERS}}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">热门话题 TOP 10</div>
+            <div class="hashtags-list">
+                {{HASHTAGS}}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">数据洞察</div>
+            <div class="insights">
+                {{INSIGHTS}}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">日报存档</div>
+            <div class="daily-reports">
+                {{DAILY_REPORTS}}
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Twitter Watchdog 自动生成月报</p>
+            <p>
+                <a href="/index.html">返回首页</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>

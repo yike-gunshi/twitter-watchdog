@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitter 推文详细报告</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #f0f3f5;
+            color: #14171a;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #ffffff;
+        }
+        .header {
+            background: linear-gradient(135deg, #1da1f2 0%, #0c85d0 100%);
+            color: white;
+            padding: 25px;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .header .subtitle {
+            font-size: 13px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            padding: 20px;
+            background: #e8f5fe;
+            border-bottom: 1px solid #e1e8ed;
+        }
+        .stat-item {
+            text-align: center;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .stat-item .value {
+            font-size: 22px;
+            font-weight: bold;
+            color: #1da1f2;
+        }
+        .stat-item .label {
+            font-size: 11px;
+            color: #657786;
+            text-transform: uppercase;
+            margin-top: 3px;
+        }
+        .section {
+            padding: 20px;
+            border-bottom: 1px solid #e1e8ed;
+        }
+        .section-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #14171a;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #1da1f2;
+        }
+        .tweets {
+            padding: 0;
+        }
+        .tweet {
+            padding: 15px 20px;
+            border-bottom: 1px solid #e1e8ed;
+            transition: background 0.2s;
+        }
+        .tweet:hover {
+            background: #f7f9fa;
+        }
+        .tweet-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .tweet-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: #1da1f2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+            margin-right: 12px;
+        }
+        .tweet-user {
+            flex: 1;
+        }
+        .tweet-name {
+            font-weight: bold;
+            color: #14171a;
+            font-size: 15px;
+        }
+        .tweet-handle {
+            color: #657786;
+            font-size: 13px;
+        }
+        .tweet-time {
+            color: #657786;
+            font-size: 12px;
+        }
+        .tweet-content {
+            color: #14171a;
+            font-size: 15px;
+            line-height: 1.5;
+            margin-bottom: 10px;
+        }
+        .tweet-meta {
+            display: flex;
+            gap: 15px;
+            color: #657786;
+            font-size: 12px;
+        }
+        .tweet-meta span {
+            display: flex;
+            align-items: center;
+        }
+        .tweet-hashtags {
+            margin-top: 10px;
+        }
+        .tweet-hashtag {
+            color: #1da1f2;
+            font-size: 13px;
+            margin-right: 10px;
+            text-decoration: none;
+        }
+        .tweet-hashtag:hover {
+            text-decoration: underline;
+        }
+        .hashtags-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .hashtags-list .hashtag {
+            background: #e8f5fe;
+            color: #1da1f2;
+            padding: 5px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .footer {
+            padding: 20px;
+            text-align: center;
+            background: #f7f9fa;
+            color: #657786;
+            font-size: 12px;
+            border-top: 1px solid #e1e8ed;
+        }
+        .no-tweets {
+            padding: 50px;
+            text-align: center;
+            color: #657786;
+        }
+        .no-tweets-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+        @media (max-width: 600px) {
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Twitter 推文详细报告</h1>
+            <div class="subtitle">{{REPORT_TIME}} | 时间范围: {{TIME_RANGE}}</div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="value">{{TWEET_COUNT}}</div>
+                <div class="label">推文数</div>
+            </div>
+            <div class="stat-item">
+                <div class="value">{{USER_COUNT}}</div>
+                <div class="label">活跃用户</div>
+            </div>
+            <div class="stat-item">
+                <div class="value">{{RETWEET_COUNT}}</div>
+                <div class="label">转推数</div>
+            </div>
+            <div class="stat-item">
+                <div class="value">{{REPLY_COUNT}}</div>
+                <div class="label">回复数</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">热门话题</div>
+            <div class="hashtags-list">
+                {{HASHTAGS_LIST}}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">推文列表</div>
+            <div class="tweets">
+                {{TWEETS_LIST}}
+            </div>
+        </div>
+
+        <div class="footer">
+            Twitter Watchdog | 自动生成于 {{GENERATED_AT}} | 总耗时: {{PROCESSING_TIME}}
+        </div>
+    </div>
+</body>
+</html>
