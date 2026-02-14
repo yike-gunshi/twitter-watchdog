@@ -66,55 +66,51 @@ cat >> "$TEMP_CRON" << 'CRON_EOF'
 # Twitter Watchdog 自动任务
 # ========================================
 
-# 推送报告 - 每天 5 个时间点
+# 推送报告 - 每天 4 个时间点（凌晨 2 点已取消）
 CRON_EOF
 
 # 添加推送报告任务
 echo "添加推送报告任务..."
 
 # 08:00 - 推送过去 8 小时的精简报告
-echo "0 8 * * * $PUSH_SCRIPT --hours-ago 8 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
+echo "0 8 * * * * $PUSH_SCRIPT --hours-ago 8 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
 echo -e "${GREEN}✓ 08:00 - push_report.sh --hours-ago 8 --format simple${NC}"
 
 # 12:00 - 推送过去 4 小时的精简报告
-echo "0 12 * * * $PUSH_SCRIPT --hours-ago 4 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
+echo "0 12 * * * * $PUSH_SCRIPT --hours-ago 4 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
 echo -e "${GREEN}✓ 12:00 - push_report.sh --hours-ago 4 --format simple${NC}"
 
 # 18:00 - 推送过去 6 小时的精简报告
-echo "0 18 * * * $PUSH_SCRIPT --hours-ago 6 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
+echo "0 18 * * * * $PUSH_SCRIPT --hours-ago 6 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
 echo -e "${GREEN}✓ 18:00 - push_report.sh --hours-ago 6 --format simple${NC}"
 
 # 22:00 - 推送过去 4 小时的精简报告
-echo "0 22 * * * $PUSH_SCRIPT --hours-ago 4 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
+echo "0 22 * * * * $PUSH_SCRIPT --hours-ago 4 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
 echo -e "${GREEN}✓ 22:00 - push_report.sh --hours-ago 4 --format simple${NC}"
 
-# 02:00 - 推送过去 4 小时的精简报告
-echo "0 2 * * * $PUSH_SCRIPT --hours-ago 4 --format simple >> /var/log/twitter-watchdog/push.log 2>&1" >> "$TEMP_CRON"
-echo -e "${GREEN}✓ 02:00 - push_report.sh --hours-ago 4 --format simple${NC}"
-
 echo ""
-echo "添加日报生成任务..."
+echo "添加日报生成和推送任务..."
 
-# 23:55 - 生成当天日报
-echo "55 23 * * * node $DAILY_REPORT_SCRIPT >> /var/log/twitter-watchdog/daily.log 2>&1" >> "$TEMP_CRON"
-echo -e "${GREEN}✓ 23:55 - generate_daily_report.js${NC}"
+# 23:00 - 生成当天全天日报并推送到 Telegram
+echo "0 23 * * * * cd $SCRIPT_DIR && node $DAILY_REPORT_SCRIPT | xargs -I {} bash -c '$PUSH_SCRIPT --hours-ago 24' >> /var/log/twitter-watchdog/daily.log 2>&1"
+echo -e "${GREEN}✓ 23:00 - 生成并推送全天日报${NC}"
 
 # 00:05 - 生成前一天日报（确保完整）
-echo "5 0 * * * node $DAILY_REPORT_SCRIPT >> /var/log/twitter-watchdog/daily.log 2>&1" >> "$TEMP_CRON"
-echo -e "${GREEN}✓ 00:05 - generate_daily_report.js${NC}"
+echo "5 0 * * * * cd $SCRIPT_DIR && node $DAILY_REPORT_SCRIPT | xargs -I {} bash -c '$PUSH_SCRIPT --hours-ago 24' >> /var/log/twitter-watchdog/daily.log 2>&1"
+echo -e "${GREEN}✓ 00:05 - 生成并推送前一日日报${NC}"
 
 echo ""
 echo "添加月报生成任务..."
 
 # 每月 1 号 00:10 - 生成上个月报告
-echo "10 0 1 * * node $MONTHLY_REPORT_SCRIPT >> /var/log/twitter-watchdog/monthly.log 2>&1" >> "$TEMP_CRON"
+echo "10 0 1 * * * cd $SCRIPT_DIR && node $MONTHLY_REPORT_SCRIPT >> /var/log/twitter-watchdog/monthly.log 2>&1"
 echo -e "${GREEN}✓ 每月 1 号 00:10 - generate_monthly_report.js${NC}"
 
 echo ""
 echo "添加索引更新任务..."
 
 # 每小时更新索引页
-echo "0 * * * * node $INDEX_SCRIPT >> /var/log/twitter-watchdog/index.log 2>&1" >> "$TEMP_CRON"
+echo "0 * * * * * node $INDEX_SCRIPT >> /var/log/twitter-watchdog/index.log 2>&1"
 echo -e "${GREEN}✓ 每小时 - generate_index.js${NC}"
 
 # 创建日志目录
@@ -139,26 +135,26 @@ echo "========================================"
 echo ""
 echo "已安装的任务:"
 echo ""
-echo "推送报告:"
-echo "  08:00  - push_report.sh --hours-ago 8 --format simple"
-echo "  12:00  - push_report.sh --hours-ago 4 --format simple"
-echo "  18:00  - push_report.sh --hours-ago 6 --format simple"
-echo "  22:00  - push_report.sh --hours-ago 4 --format simple"
-echo "  02:00  - push_report.sh --hours-ago 4 --format simple"
+echo "推送报告（精简版）:"
+echo "  08:00 - push_report.sh --hours-ago 8"
+echo "  12:00 - push_report.sh --hours-ago 4"
+echo "  18:00 - push_report.sh --hours-ago 6"
+echo "  22:00 - push_report.sh --hours-ago 4"
 echo ""
-echo "日报生成:"
-echo "  23:55  - generate_daily_report.js"
-echo "  00:05  - generate_daily_report.js"
+echo "日报生成和推送（全天）:"
+echo "  23:00 - 生成并推送当天全天日报"
+echo "  00:05 - 生成并推送前一日日报"
 echo ""
 echo "月报生成:"
-echo "  每月 1 号 00:10 - generate_monthly_report.js"
+echo "  每月 1 号 00:10 - 生成月报"
 echo ""
 echo "索引更新:"
-echo "  每小时 - generate_index.js"
+echo "  每小时 - 更新索引页"
 echo ""
 echo "日志目录: /var/log/twitter-watchdog/"
 echo ""
 echo "查看 crontab: crontab -l"
-echo "查看日志: tail -f /var/log/twitter-watchdog/push.log"
+echo "查看推送日志: tail -f /var/log/twitter-watchdog/push.log"
+echo "查看日报日志: tail -f /var/log/twitter-watchdog/daily.log"
 echo ""
 echo "========================================"
