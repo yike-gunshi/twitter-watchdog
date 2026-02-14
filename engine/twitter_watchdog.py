@@ -1155,6 +1155,58 @@ urgent_ids 必须是 ai_tweet_ids 的子集，只包含真正重大的突发事�
         except Exception as e:
             print(f"  通知失败: {e}")
 
+    # ── 数据库自动入库 ─────────────────────────────────────
+
+    def _auto_import_to_db(self, file_path, file_type="raw"):
+        """将抓取/分析结果自动导入数据库
+
+        使用同步方式调用异步存储服务，不影响原有流程。
+        如果导入失败，只打印警告不中断。
+        """
+        try:
+            import asyncio
+            import sys
+
+            # 添加 backend 目录到 sys.path
+            backend_dir = str(Path(__file__).resolve().parent.parent / "backend")
+            if backend_dir not in sys.path:
+                sys.path.insert(0, backend_dir)
+
+            from app.core.database import async_session, init_db
+            from app.services.tweet_store import TweetStore
+
+            async def _do_import():
+                # 确保表存在
+                await init_db()
+                async with async_session() as session:
+                    store = TweetStore(session)
+                    if file_type == "analysis":
+                        result = await store.import_from_analysis_json(file_path)
+                        added = result.get("tweets_added", 0)
+                        updated = result.get("tweets_updated", 0)
+                        analyses = result.get("analyses_added", 0)
+                        print(f"  📦 入库: +{added} 新推文, ↻{updated} 更新, 📊{analyses} 条分析")
+                    else:
+                        result = await store.import_from_raw_json(file_path)
+                        added = result.get("tweets_added", 0)
+                        updated = result.get("tweets_updated", 0)
+                        authors = result.get("authors_count", 0)
+                        print(f"  📦 入库: +{added} 新推文, ↻{updated} 更新, 👤{authors} 位作者")
+
+            # 运行异步导入
+            try:
+                loop = asyncio.get_running_loop()
+                # 如果已有事件循环（如在 FastAPI 中调用），用 ensure_future
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    loop.run_in_executor(pool, lambda: asyncio.run(_do_import()))
+            except RuntimeError:
+                # 没有运行中的事件循环，直接 asyncio.run
+                asyncio.run(_do_import())
+
+        except Exception as e:
+            print(f"  ⚠ 数据库入库失败（不影响主流程）: {type(e).__name__}: {e}")
+
     # ── Layer 1: 抓取 ──────────────────────────────────────
 
     def run_scrape(self):
@@ -1269,6 +1321,9 @@ urgent_ids 必须是 ai_tweet_ids 的子集，只包含真正重大的突发事�
 
         print(f"\n  原始数据: {raw_file}")
         print(f"  关注推文: {total_tweets} 条 | 热门推文: {len(trending_tweets)} 条 | API 调用: {api_calls} 次")
+
+        # 自动入库
+        self._auto_import_to_db(str(raw_file), file_type="raw")
 
         return str(raw_file)
 
@@ -1473,6 +1528,9 @@ urgent_ids 必须是 ai_tweet_ids 的子集，只包含真正重大的突发事�
 
         print(f"\n  分析结果: {analysis_file}")
         print(f"  筛选: {total_before + len(all_trending)} 条 → {total_filtered} 条 AI 相关")
+
+        # 自动入库
+        self._auto_import_to_db(str(analysis_file), file_type="analysis")
 
         return str(analysis_file)
 

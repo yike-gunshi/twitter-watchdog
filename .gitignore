@@ -19,3 +19,6 @@ output/
 # IDE
 .vscode/
 .idea/
+
+# Database
+backend/data/

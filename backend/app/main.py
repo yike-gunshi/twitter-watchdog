@@ -11,6 +11,7 @@ from app.api.config import router as config_router
 from app.api.jobs import router as jobs_router
 from app.api.reports import router as reports_router
 from app.api.data import router as data_router
+from app.api.tweets import router as tweets_router, author_router as authors_router
 
 
 def _resolve_reports_dir() -> Path | None:
@@ -63,6 +64,8 @@ app.include_router(config_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
+app.include_router(tweets_router)
+app.include_router(authors_router)
 
 # Mount report assets (images) as static files
 _reports_dir = _resolve_reports_dir()
