@@ -44,6 +44,8 @@ export interface Report {
   type: "single" | "daily" | "weekly" | "monthly";
   title?: string;
   tweet_count: number;
+  period_start?: string | null;
+  period_end?: string | null;
   created_at: string;
   summary?: string;
 }

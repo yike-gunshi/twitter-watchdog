@@ -45,6 +45,8 @@ async def list_reports(
                 type=r.type,
                 summary=r.summary,
                 tweet_count=r.tweet_count,
+                period_start=r.period_start,
+                period_end=r.period_end,
                 created_at=r.created_at,
             )
             for r in reports
@@ -67,6 +69,8 @@ async def get_report(report_id: int, db: AsyncSession = Depends(get_db)):
         file_path=report.file_path,
         summary=report.summary,
         tweet_count=report.tweet_count,
+        period_start=report.period_start,
+        period_end=report.period_end,
         created_at=report.created_at,
     )
 

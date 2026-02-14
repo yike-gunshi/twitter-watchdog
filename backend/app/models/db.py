@@ -60,4 +60,6 @@ class Report(Base):
     file_path = Column(String(512), nullable=False)
     summary = Column(Text, nullable=True, default="")
     tweet_count = Column(Integer, nullable=False, default=0)
+    period_start = Column(DateTime(timezone=True), nullable=True, default=None)
+    period_end = Column(DateTime(timezone=True), nullable=True, default=None)
     created_at = Column(DateTime(timezone=True), default=now_cn)

@@ -46,7 +46,14 @@ async def _poll_log(job_id: int, log_buf: LogCapture, stop_event: asyncio.Event)
             await _update_job(job_id, log=text)
 
 
-async def _save_report(result_file: str, report_type: str, log_text: str):
+async def _save_report(
+    result_file: str,
+    report_type: str,
+    log_text: str,
+    daily: str | None = None,
+    weekly: str | None = None,
+    monthly: str | None = None,
+):
     """Create a Report row if a report file was produced."""
     if not result_file:
         return
@@ -70,12 +77,38 @@ async def _save_report(result_file: str, report_type: str, log_text: str):
                 tweet_count += int(n)
             break
 
+    # Calculate period_start / period_end from task params
+    period_start = None
+    period_end = None
+    try:
+        if daily:
+            d = datetime.strptime(daily, "%Y-%m-%d").replace(tzinfo=TZ_CN)
+            period_start = d
+            period_end = d + timedelta(days=1) - timedelta(seconds=1)
+        elif weekly:
+            d = datetime.strptime(weekly, "%Y-%m-%d").replace(tzinfo=TZ_CN)
+            period_start = d
+            period_end = d + timedelta(days=7) - timedelta(seconds=1)
+        elif monthly:
+            parts = monthly.split("-")
+            year, month = int(parts[0]), int(parts[1])
+            period_start = datetime(year, month, 1, tzinfo=TZ_CN)
+            # Next month
+            if month == 12:
+                period_end = datetime(year + 1, 1, 1, tzinfo=TZ_CN) - timedelta(seconds=1)
+            else:
+                period_end = datetime(year, month + 1, 1, tzinfo=TZ_CN) - timedelta(seconds=1)
+    except (ValueError, IndexError):
+        pass
+
     async with async_session() as session:
         report = Report(
             type=report_type,
             file_path=result_file,
             summary=summary,
             tweet_count=tweet_count,
+            period_start=period_start,
+            period_end=period_end,
         )
         session.add(report)
         await session.commit()
@@ -147,7 +180,7 @@ async def execute_job(job_id: int, job_type: str, params: dict):
                 report_type = "weekly"
             elif monthly_val:
                 report_type = "monthly"
-            await _save_report(result_file, report_type, log_text)
+            await _save_report(result_file, report_type, log_text, daily=daily_val, weekly=weekly_val, monthly=monthly_val)
         elif job_type == "pipeline":
             result_file, log_text = await _run_in_thread(
                 service.run_pipeline,

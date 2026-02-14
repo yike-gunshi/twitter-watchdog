@@ -75,6 +75,8 @@ class ReportOut(BaseModel):
     file_path: str
     summary: Optional[str] = None
     tweet_count: int
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
@@ -85,6 +87,8 @@ class ReportListOut(BaseModel):
     type: str
     summary: Optional[str] = None
     tweet_count: int
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}

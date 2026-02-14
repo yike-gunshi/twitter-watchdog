@@ -627,9 +627,14 @@ export default function WorkbenchPage() {
   return (
     <div className="space-y-10">
       {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">工作台</h2>
-        <p className="text-sm text-muted-foreground mt-1">触发任务、管理执行、配置系统</p>
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 shadow-lg shadow-violet-500/20">
+          <Play className="h-5 w-5 text-white" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">工作台</h2>
+          <p className="text-sm text-muted-foreground/70 mt-0.5">触发任务、管理执行、配置系统</p>
+        </div>
       </div>
 
       {/* ① Quick Actions */}
@@ -640,7 +645,7 @@ export default function WorkbenchPage() {
               key={action.type}
               onClick={() => handleOpenDialog(action.type)}
               disabled={runningAction !== null}
-              className={`group relative flex flex-col items-center gap-2.5 rounded-2xl p-5 text-center text-white transition-all duration-200 bg-gradient-to-br ${action.gradient} hover:shadow-lg hover:shadow-black/10 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:hover:shadow-none disabled:hover:translate-y-0`}
+              className={`group relative flex flex-col items-center gap-2.5 rounded-2xl p-5 text-center text-white transition-all duration-300 bg-gradient-to-br ${action.gradient} hover:shadow-xl hover:shadow-black/15 hover:-translate-y-1 active:translate-y-0 disabled:opacity-50 disabled:hover:shadow-none disabled:hover:translate-y-0 cursor-pointer`}
             >
               {runningAction === action.type ? (
                 <Loader2 className="h-7 w-7 animate-spin" />
@@ -694,7 +699,7 @@ export default function WorkbenchPage() {
                 const isExpanded = expandedJobId === job.id;
 
                 return (
-                  <div key={job.id} className="rounded-xl border overflow-hidden transition-all duration-200 hover:border-border/80">
+                  <div key={job.id} className="rounded-2xl border border-border/40 overflow-hidden transition-all duration-300 hover:border-border/60 hover:shadow-sm bg-card/60 backdrop-blur-sm">
                     <div className="flex items-center justify-between px-4 py-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <Badge variant="secondary" className={`gap-1 text-[11px] shrink-0 border ${status.className}`}>
@@ -859,9 +864,9 @@ export default function WorkbenchPage() {
         ) : config ? (
           <div className="space-y-2">
             {/* Source section */}
-            <div className="rounded-xl border overflow-hidden">
+            <div className="rounded-2xl border border-border/40 overflow-hidden bg-card/60 backdrop-blur-sm">
               <button
-                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors"
+                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors duration-200 cursor-pointer"
                 onClick={() => setSourceOpen(!sourceOpen)}
               >
                 <div className="text-left">
@@ -883,7 +888,7 @@ export default function WorkbenchPage() {
                       {config.custom_accounts.map((u, i) => (
                         <span key={i} className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium">
                           @{u}
-                          <button onClick={() => removeTag("custom_accounts", i)} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
+                          <button onClick={() => removeTag("custom_accounts", i)} className="ml-0.5 hover:text-destructive transition-colors duration-200 cursor-pointer"><X className="h-3 w-3" /></button>
                         </span>
                       ))}
                     </div>
@@ -898,9 +903,9 @@ export default function WorkbenchPage() {
             </div>
 
             {/* Style section */}
-            <div className="rounded-xl border overflow-hidden">
+            <div className="rounded-2xl border border-border/40 overflow-hidden bg-card/60 backdrop-blur-sm">
               <button
-                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors"
+                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors duration-200 cursor-pointer"
                 onClick={() => setStyleOpen(!styleOpen)}
               >
                 <div className="text-left">
@@ -918,9 +923,9 @@ export default function WorkbenchPage() {
             </div>
 
             {/* Filter section */}
-            <div className="rounded-xl border overflow-hidden">
+            <div className="rounded-2xl border border-border/40 overflow-hidden bg-card/60 backdrop-blur-sm">
               <button
-                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors"
+                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors duration-200 cursor-pointer"
                 onClick={() => setFilterOpen(!filterOpen)}
               >
                 <div className="text-left">
@@ -937,7 +942,7 @@ export default function WorkbenchPage() {
                       {config.keywords.map((kw, i) => (
                         <span key={i} className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium">
                           {kw}
-                          <button onClick={() => removeTag("keywords", i)} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
+                          <button onClick={() => removeTag("keywords", i)} className="ml-0.5 hover:text-destructive transition-colors duration-200 cursor-pointer"><X className="h-3 w-3" /></button>
                         </span>
                       ))}
                     </div>
@@ -962,9 +967,9 @@ export default function WorkbenchPage() {
             </div>
 
             {/* Telegram section */}
-            <div className="rounded-xl border overflow-hidden">
+            <div className="rounded-2xl border border-border/40 overflow-hidden bg-card/60 backdrop-blur-sm">
               <button
-                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors"
+                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/30 transition-colors duration-200 cursor-pointer"
                 onClick={() => setTelegramOpen(!telegramOpen)}
               >
                 <div className="text-left">
